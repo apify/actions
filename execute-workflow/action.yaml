@@ -1,0 +1,30 @@
+name: 'Execute Workflow'
+description: 'Execute GitHub Actions workflows and wait for them to complete'
+
+inputs:
+  workflow:
+    description: "Workflow filename relative to .github/workflows (e.g., 'my-workflow.yaml')"
+    required: true
+  inputs:
+    description: 'Inputs to pass to the workflow, must be a JSON string'
+    required: false
+  token:
+    description: 'GitHub token for authentication'
+    required: false
+    default: ${{ github.token }}
+
+runs:
+  using: composite
+  steps:
+    - name: Execute workflow
+      uses: actions/github-script@v8
+      with:
+        github-token: ${{ inputs.token }}
+        script: |
+          const { main } = require('${{ github.action_path }}/index.mts');
+
+          await main({
+              github,
+              context,
+              core,
+          });

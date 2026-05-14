@@ -1,0 +1,23 @@
+{
+    "compilerOptions": {
+        "allowImportingTsExtensions": true,
+        "checkJs": true,
+        "erasableSyntaxOnly": true,
+        "incremental": true,
+        "module": "nodenext",
+        "moduleResolution": "nodenext",
+        "noEmit": true,
+        "noUncheckedSideEffectImports": true,
+        "noUnusedLocals": true,
+        "noUnusedParameters": true,
+        "preserveConstEnums": true,
+        "resolveJsonModule": true,
+        "skipLibCheck": true,
+        "target": "esnext",
+        "types": ["node"],
+        "verbatimModuleSyntax": true,
+    },
+    "include": [
+        "*.ts", "*.mts", "*.cts"
+    ],
+}
