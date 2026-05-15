@@ -1,0 +1,259 @@
+name: 'MongoDB Query Index Check'
+description: >-
+  Reviews a pull request for MongoDB queries that don't use an appropriate index. Cross-references
+  changed queries against the canonical mongo-indexes definitions, then asks Claude Code to post
+  inline review comments and (optionally) fail the check when high-severity issues are found.
+
+inputs:
+  anthropic-api-key:
+    description: 'Anthropic API key passed through to anthropics/claude-code-action.'
+    required: true
+  github-token:
+    description: 'GitHub token used to post review comments. Defaults to GITHUB_TOKEN.'
+    required: false
+    default: ${{ github.token }}
+  mongo-indexes-source:
+    description: >-
+      Where to load the canonical mongo-indexes definitions from. One of:
+      `apify-core` (default) — sparse-checkout `src/packages/mongo-indexes/src` from apify/apify-core;
+      `local` — use a directory in the current workspace (set `mongo-indexes-path`).
+    required: false
+    default: 'apify-core'
+  apify-core-ref:
+    description: 'Git ref to fetch when mongo-indexes-source is `apify-core`. Defaults to `develop`.'
+    required: false
+    default: 'develop'
+  apify-core-token:
+    description: >-
+      GitHub token used to fetch the mongo-indexes from apify/apify-core. Required when
+      `mongo-indexes-source` is `apify-core` and the calling repository is not apify/apify-core
+      (the default `${{ github.token }}` only has access to the current repo). Must have
+      `contents: read` on apify/apify-core. Falls back to `github-token` when empty.
+    required: false
+    default: ''
+  mongo-indexes-path:
+    description: >-
+      Path to the mongo-indexes source directory, relative to the workspace.
+      Required when `mongo-indexes-source` is `local`.
+    required: false
+    default: ''
+  claude-model:
+    description: 'Claude model passed to `--model` (e.g. `claude-sonnet-4-6`). Empty to use the action default.'
+    required: false
+    default: ''
+  max-turns:
+    description: 'Maximum turns Claude may take. Default 30.'
+    required: false
+    default: '30'
+  paths:
+    description: >-
+      Comma-separated glob patterns of files to inspect (matched against PR file paths).
+      Default covers TypeScript and JavaScript source files.
+    required: false
+    default: '**/*.ts,**/*.mts,**/*.cts,**/*.tsx,**/*.js,**/*.mjs,**/*.cjs,**/*.jsx'
+  paths-ignore:
+    description: 'Comma-separated glob patterns to exclude. Test, build and the mongo-indexes package itself are excluded by default.'
+    required: false
+    default: '**/node_modules/**,**/dist/**,**/build/**,**/test/**,**/__tests__/**,**/*.test.*,**/*.spec.*,**/mongo-indexes/**'
+  severity-threshold:
+    description: 'Minimum severity that fails the check. One of `low`, `medium`, `high`, `critical`. Default `high`.'
+    required: false
+    default: 'high'
+  request-changes:
+    description: 'If `true`, fail the check when findings meet the severity threshold. If `false`, leave comments only.'
+    required: false
+    default: 'true'
+  extra-prompt:
+    description: 'Optional extra instructions appended to the Claude prompt (e.g. repo-specific context).'
+    required: false
+    default: ''
+
+outputs:
+  should-run:
+    description: '`true` when MongoDB-related changes were detected (and Claude was invoked).'
+    value: ${{ steps.pre-check.outputs.should-run }}
+  changed-files:
+    description: 'JSON array of files Claude reviewed.'
+    value: ${{ steps.pre-check.outputs.changed-files }}
+  max-severity:
+    description: 'Highest severity in the review: one of `none`, `low`, `medium`, `high`, `critical`.'
+    value: ${{ steps.finalize.outputs.max-severity }}
+
+runs:
+  using: composite
+  steps:
+    - name: Validate event
+      shell: bash
+      run: |
+        if [ "${{ github.event_name }}" != "pull_request" ] && [ "${{ github.event_name }}" != "pull_request_target" ]; then
+          echo "::error::This action only runs on 'pull_request' or 'pull_request_target' events (got '${{ github.event_name }}')."
+          exit 1
+        fi
+
+    - name: Validate inputs
+      shell: bash
+      env:
+        SOURCE: ${{ inputs.mongo-indexes-source }}
+        LOCAL_PATH: ${{ inputs.mongo-indexes-path }}
+        THRESHOLD: ${{ inputs.severity-threshold }}
+      run: |
+        case "$SOURCE" in
+          apify-core|local) ;;
+          *) echo "::error::Invalid mongo-indexes-source '$SOURCE' (must be 'apify-core' or 'local')."; exit 1 ;;
+        esac
+        if [ "$SOURCE" = "local" ] && [ -z "$LOCAL_PATH" ]; then
+          echo "::error::mongo-indexes-path is required when mongo-indexes-source is 'local'."
+          exit 1
+        fi
+        case "$THRESHOLD" in
+          low|medium|high|critical) ;;
+          *) echo "::error::Invalid severity-threshold '$THRESHOLD' (must be 'low', 'medium', 'high' or 'critical')."; exit 1 ;;
+        esac
+
+    - name: Pre-check PR diff
+      id: pre-check
+      uses: actions/github-script@v8
+      env:
+        INPUT_PATHS: ${{ inputs.paths }}
+        INPUT_PATHS_IGNORE: ${{ inputs.paths-ignore }}
+        OUTPUT_CHANGED_FILES_PATH: ${{ runner.temp }}/mongo-index-changed-files.json
+      with:
+        github-token: ${{ inputs.github-token }}
+        script: |
+          const { preCheck } = require('${{ github.action_path }}/index.mts');
+          await preCheck({ github, context, core, env: process.env });
+
+    - name: Fetch apify-core mongo-indexes (sparse checkout)
+      if: steps.pre-check.outputs.should-run == 'true' && inputs.mongo-indexes-source == 'apify-core'
+      shell: bash
+      env:
+        APIFY_CORE_TOKEN: ${{ inputs.apify-core-token != '' && inputs.apify-core-token || inputs.github-token }}
+        APIFY_CORE_REF: ${{ inputs.apify-core-ref }}
+      run: |
+        set -euo pipefail
+        target="${RUNNER_TEMP}/apify-core"
+        rm -rf "$target"
+        mkdir -p "$target"
+        cd "$target"
+        git init -q
+        # Inject the token via an `extraheader` so it isn't written to .git/config in plaintext as part of the URL.
+        git config --local "http.https://github.com/.extraheader" "AUTHORIZATION: basic $(printf 'x-access-token:%s' "$APIFY_CORE_TOKEN" | base64 -w0)"
+        git remote add origin "https://github.com/apify/apify-core.git"
+        git config core.sparseCheckout true
+        echo 'src/packages/mongo-indexes/src/*' > .git/info/sparse-checkout
+        git fetch --depth=1 -q origin "$APIFY_CORE_REF"
+        git checkout -q FETCH_HEAD
+        # Wipe the credential header so subsequent steps cannot read it.
+        git config --local --unset "http.https://github.com/.extraheader" || true
+        indexes_dir="${target}/src/packages/mongo-indexes/src"
+        if [ ! -d "$indexes_dir" ]; then
+          echo "::error::Could not find src/packages/mongo-indexes/src in apify/apify-core@${APIFY_CORE_REF}"
+          exit 1
+        fi
+        file_count=$(find "$indexes_dir" -maxdepth 2 -type f -name '*.ts' | wc -l)
+        echo "Fetched ${file_count} mongo-indexes source file(s) from apify-core@${APIFY_CORE_REF}."
+        echo "MONGO_INDEXES_DIR=${indexes_dir}" >> "$GITHUB_ENV"
+
+    - name: Resolve local mongo-indexes path
+      if: steps.pre-check.outputs.should-run == 'true' && inputs.mongo-indexes-source == 'local'
+      shell: bash
+      env:
+        LOCAL_PATH: ${{ inputs.mongo-indexes-path }}
+      run: |
+        set -euo pipefail
+        if [ ! -d "$LOCAL_PATH" ]; then
+          echo "::error::mongo-indexes-path does not exist: $LOCAL_PATH"
+          exit 1
+        fi
+        abs_path="$(cd "$LOCAL_PATH" && pwd)"
+        file_count=$(find "$abs_path" -maxdepth 2 -type f -name '*.ts' | wc -l)
+        echo "Using ${file_count} local mongo-indexes source file(s) from ${abs_path}."
+        echo "MONGO_INDEXES_DIR=${abs_path}" >> "$GITHUB_ENV"
+
+    - name: Initialize review result
+      if: steps.pre-check.outputs.should-run == 'true'
+      shell: bash
+      run: |
+        echo none > "${RUNNER_TEMP}/mongo-index-result.txt"
+
+    - name: Render Claude prompt
+      id: render
+      if: steps.pre-check.outputs.should-run == 'true'
+      shell: bash
+      env:
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        REPO: ${{ github.repository }}
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        CHANGED_FILES_PATH: ${{ runner.temp }}/mongo-index-changed-files.json
+        RESULT_PATH: ${{ runner.temp }}/mongo-index-result.txt
+        SEVERITY_THRESHOLD: ${{ inputs.severity-threshold }}
+        REQUEST_CHANGES_MODE: ${{ inputs.request-changes }}
+        EXTRA_PROMPT: ${{ inputs.extra-prompt }}
+      run: |
+        set -euo pipefail
+        prompt_file="${RUNNER_TEMP}/mongo-index-prompt.md"
+        envsubst '$PR_NUMBER $REPO $BASE_SHA $HEAD_SHA $MONGO_INDEXES_DIR $CHANGED_FILES_PATH $RESULT_PATH $SEVERITY_THRESHOLD $REQUEST_CHANGES_MODE $EXTRA_PROMPT' \
+          < "${GITHUB_ACTION_PATH}/prompts/review.md" \
+          > "$prompt_file"
+        delimiter="EOF_$(uuidgen | tr -d -)"
+        {
+          echo "prompt<<${delimiter}"
+          cat "$prompt_file"
+          echo
+          echo "${delimiter}"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Run Claude Code review
+      if: steps.pre-check.outputs.should-run == 'true'
+      uses: anthropics/claude-code-action@v1
+      with:
+        anthropic_api_key: ${{ inputs.anthropic-api-key }}
+        github_token: ${{ inputs.github-token }}
+        prompt: ${{ steps.render.outputs.prompt }}
+        claude_args: >-
+          --max-turns ${{ inputs.max-turns }}
+          ${{ inputs.claude-model != '' && format('--model {0}', inputs.claude-model) || '' }}
+          --allowedTools "mcp__github__pull_request_read,mcp__github__pull_request_review_write,mcp__github__create_pending_pull_request_review,mcp__github__submit_pending_pull_request_review,mcp__github__add_comment_to_pending_review,mcp__github_inline_comment__create_inline_comment,Read,Write,Bash(ls:*),Bash(cat:*),Bash(grep:*),Bash(rg:*),Bash(find:*),Bash(test:*),Bash(echo:*),Bash(printf:*),Bash(head:*),Bash(tail:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr review:*),Bash(gh api:*)"
+
+    - name: Finalize review result
+      id: finalize
+      if: always() && steps.pre-check.outputs.should-run == 'true'
+      shell: bash
+      env:
+        INPUT_SEVERITY_THRESHOLD: ${{ inputs.severity-threshold }}
+        INPUT_REQUEST_CHANGES: ${{ inputs.request-changes }}
+        RESULT_PATH: ${{ runner.temp }}/mongo-index-result.txt
+      run: |
+        set -euo pipefail
+
+        severity_rank() {
+          case "$1" in
+            critical) echo 4 ;;
+            high)     echo 3 ;;
+            medium)   echo 2 ;;
+            low)      echo 1 ;;
+            *)        echo 0 ;;
+          esac
+        }
+
+        if [ -f "$RESULT_PATH" ]; then
+          max_severity="$(tr -d '[:space:]' < "$RESULT_PATH" | tr '[:upper:]' '[:lower:]')"
+        else
+          max_severity="none"
+        fi
+        case "$max_severity" in
+          none|low|medium|high|critical) ;;
+          *) echo "::warning::Unexpected severity value '${max_severity}' in result file, treating as 'none'."; max_severity="none" ;;
+        esac
+
+        threshold_rank=$(severity_rank "$INPUT_SEVERITY_THRESHOLD")
+        max_rank=$(severity_rank "$max_severity")
+
+        echo "max-severity=${max_severity}" >> "$GITHUB_OUTPUT"
+        echo "Max severity from review: ${max_severity} (rank ${max_rank}); threshold: ${INPUT_SEVERITY_THRESHOLD} (rank ${threshold_rank})."
+
+        if [ "$INPUT_REQUEST_CHANGES" = "true" ] && [ "$max_rank" -ge "$threshold_rank" ] && [ "$max_rank" -gt 0 ]; then
+          echo "::error::MongoDB index review found issues at severity '${max_severity}', which meets the configured threshold '${INPUT_SEVERITY_THRESHOLD}'. See the inline review comments on this PR."
+          exit 1
+        fi
