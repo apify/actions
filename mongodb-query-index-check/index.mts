@@ -38,19 +38,15 @@ export function parseGlobs(input: string): string[] {
         .filter(Boolean);
 }
 
-// Translate a (lightweight, path-segment) glob to a RegExp. Supports `**`, `*`, `?`. Patterns are
-// anchored on both ends. The `**/` form is collapsed to "zero or more path segments" so the pattern
-// `** SLASH *.ts` matches both `a.ts` and `a/b/c.ts`. Anything else is treated as a regex-escaped
-// literal.
+// Translate a path-segment glob (`**`, `*`, `?`) to an anchored RegExp. `**/` collapses to zero-or-more
+// path segments so `**/*.ts` matches both `a.ts` and `a/b/c.ts`.
 export function globToRegex(pattern: string): RegExp {
     let out = '';
     let i = 0;
     while (i < pattern.length) {
         const c = pattern[i]!;
         if (c === '*' && pattern[i + 1] === '*') {
-            // `**` matches across path separators.
             if (pattern[i + 2] === '/') {
-                // `**/` → optional "<segment>/<segment>/..." prefix (matches zero or more segments).
                 out += '(?:.*/)?';
                 i += 3;
             } else {
@@ -58,7 +54,6 @@ export function globToRegex(pattern: string): RegExp {
                 i += 2;
             }
         } else if (c === '*') {
-            // Single `*` matches anything except a path separator.
             out += '[^/]*';
             i += 1;
         } else if (c === '?') {

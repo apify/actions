@@ -82,21 +82,19 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Validate event
-      shell: bash
-      run: |
-        if [ "${{ github.event_name }}" != "pull_request" ] && [ "${{ github.event_name }}" != "pull_request_target" ]; then
-          echo "::error::This action only runs on 'pull_request' or 'pull_request_target' events (got '${{ github.event_name }}')."
-          exit 1
-        fi
-
     - name: Validate inputs
       shell: bash
       env:
+        EVENT_NAME: ${{ github.event_name }}
         SOURCE: ${{ inputs.mongo-indexes-source }}
         LOCAL_PATH: ${{ inputs.mongo-indexes-path }}
         THRESHOLD: ${{ inputs.severity-threshold }}
       run: |
+        set -euo pipefail
+        if [ "$EVENT_NAME" != "pull_request" ] && [ "$EVENT_NAME" != "pull_request_target" ]; then
+          echo "::error::This action only runs on 'pull_request' or 'pull_request_target' events (got '$EVENT_NAME')."
+          exit 1
+        fi
         case "$SOURCE" in
           apify-core|local) ;;
           *) echo "::error::Invalid mongo-indexes-source '$SOURCE' (must be 'apify-core' or 'local')."; exit 1 ;;
@@ -123,58 +121,53 @@ runs:
           const { preCheck } = require('${{ github.action_path }}/index.mts');
           await preCheck({ github, context, core, env: process.env });
 
-    - name: Fetch apify-core mongo-indexes (sparse checkout)
+    - name: Checkout apify-core mongo-indexes
       if: steps.pre-check.outputs.should-run == 'true' && inputs.mongo-indexes-source == 'apify-core'
+      uses: actions/checkout@v6
+      with:
+        repository: apify/apify-core
+        ref: ${{ inputs.apify-core-ref }}
+        token: ${{ inputs.apify-core-token != '' && inputs.apify-core-token || inputs.github-token }}
+        path: __mongo_index_check_apify_core
+        sparse-checkout: src/packages/mongo-indexes/src
+        sparse-checkout-cone-mode: false
+        fetch-depth: 1
+
+    - name: Resolve mongo-indexes directory
+      if: steps.pre-check.outputs.should-run == 'true'
       shell: bash
       env:
-        APIFY_CORE_TOKEN: ${{ inputs.apify-core-token != '' && inputs.apify-core-token || inputs.github-token }}
+        SOURCE: ${{ inputs.mongo-indexes-source }}
+        LOCAL_PATH: ${{ inputs.mongo-indexes-path }}
         APIFY_CORE_REF: ${{ inputs.apify-core-ref }}
       run: |
         set -euo pipefail
-        target="${RUNNER_TEMP}/apify-core"
-        rm -rf "$target"
-        mkdir -p "$target"
-        cd "$target"
-        git init -q
-        # Inject the token via an `extraheader` so it isn't written to .git/config in plaintext as part of the URL.
-        git config --local "http.https://github.com/.extraheader" "AUTHORIZATION: basic $(printf 'x-access-token:%s' "$APIFY_CORE_TOKEN" | base64 -w0)"
-        git remote add origin "https://github.com/apify/apify-core.git"
-        git config core.sparseCheckout true
-        echo 'src/packages/mongo-indexes/src/*' > .git/info/sparse-checkout
-        git fetch --depth=1 -q origin "$APIFY_CORE_REF"
-        git checkout -q FETCH_HEAD
-        # Wipe the credential header so subsequent steps cannot read it.
-        git config --local --unset "http.https://github.com/.extraheader" || true
-        indexes_dir="${target}/src/packages/mongo-indexes/src"
+        # Seed the shared result file path first so the finalize step has something to read even if
+        # the rest of this step fails midway.
+        echo "RESULT_PATH=${RUNNER_TEMP}/mongo-index-result.txt" >> "$GITHUB_ENV"
+        printf 'none' > "${RUNNER_TEMP}/mongo-index-result.txt"
+
+        case "$SOURCE" in
+          apify-core)
+            indexes_dir="${GITHUB_WORKSPACE}/__mongo_index_check_apify_core/src/packages/mongo-indexes/src"
+            origin_label="apify-core@${APIFY_CORE_REF}"
+            ;;
+          local)
+            if [ ! -d "$LOCAL_PATH" ]; then
+              echo "::error::mongo-indexes-path does not exist: $LOCAL_PATH"
+              exit 1
+            fi
+            indexes_dir="$(cd "$LOCAL_PATH" && pwd)"
+            origin_label="local path ${LOCAL_PATH}"
+            ;;
+        esac
         if [ ! -d "$indexes_dir" ]; then
-          echo "::error::Could not find src/packages/mongo-indexes/src in apify/apify-core@${APIFY_CORE_REF}"
+          echo "::error::Could not find mongo-indexes source directory at: $indexes_dir"
           exit 1
         fi
         file_count=$(find "$indexes_dir" -maxdepth 2 -type f -name '*.ts' | wc -l)
-        echo "Fetched ${file_count} mongo-indexes source file(s) from apify-core@${APIFY_CORE_REF}."
+        echo "Resolved mongo-indexes from ${origin_label}: ${indexes_dir} (${file_count} .ts file(s))."
         echo "MONGO_INDEXES_DIR=${indexes_dir}" >> "$GITHUB_ENV"
-
-    - name: Resolve local mongo-indexes path
-      if: steps.pre-check.outputs.should-run == 'true' && inputs.mongo-indexes-source == 'local'
-      shell: bash
-      env:
-        LOCAL_PATH: ${{ inputs.mongo-indexes-path }}
-      run: |
-        set -euo pipefail
-        if [ ! -d "$LOCAL_PATH" ]; then
-          echo "::error::mongo-indexes-path does not exist: $LOCAL_PATH"
-          exit 1
-        fi
-        abs_path="$(cd "$LOCAL_PATH" && pwd)"
-        file_count=$(find "$abs_path" -maxdepth 2 -type f -name '*.ts' | wc -l)
-        echo "Using ${file_count} local mongo-indexes source file(s) from ${abs_path}."
-        echo "MONGO_INDEXES_DIR=${abs_path}" >> "$GITHUB_ENV"
-
-    - name: Initialize review result
-      if: steps.pre-check.outputs.should-run == 'true'
-      shell: bash
-      run: |
-        echo none > "${RUNNER_TEMP}/mongo-index-result.txt"
 
     - name: Render Claude prompt
       id: render
@@ -186,7 +179,6 @@ runs:
         BASE_SHA: ${{ github.event.pull_request.base.sha }}
         HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         CHANGED_FILES_PATH: ${{ runner.temp }}/mongo-index-changed-files.json
-        RESULT_PATH: ${{ runner.temp }}/mongo-index-result.txt
         SEVERITY_THRESHOLD: ${{ inputs.severity-threshold }}
         REQUEST_CHANGES_MODE: ${{ inputs.request-changes }}
         EXTRA_PROMPT: ${{ inputs.extra-prompt }}
@@ -196,7 +188,7 @@ runs:
         envsubst '$PR_NUMBER $REPO $BASE_SHA $HEAD_SHA $MONGO_INDEXES_DIR $CHANGED_FILES_PATH $RESULT_PATH $SEVERITY_THRESHOLD $REQUEST_CHANGES_MODE $EXTRA_PROMPT' \
           < "${GITHUB_ACTION_PATH}/prompts/review.md" \
           > "$prompt_file"
-        delimiter="EOF_$(uuidgen | tr -d -)"
+        delimiter="EOF_${RANDOM}${RANDOM}${RANDOM}"
         {
           echo "prompt<<${delimiter}"
           cat "$prompt_file"
@@ -223,7 +215,6 @@ runs:
       env:
         INPUT_SEVERITY_THRESHOLD: ${{ inputs.severity-threshold }}
         INPUT_REQUEST_CHANGES: ${{ inputs.request-changes }}
-        RESULT_PATH: ${{ runner.temp }}/mongo-index-result.txt
       run: |
         set -euo pipefail
 

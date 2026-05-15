@@ -151,17 +151,20 @@ interface FakeFile {
 }
 
 function makeFakeGithub(files: FakeFile[]) {
+    const listFilesFn = (): unknown => undefined;
+    const calls: { fn: unknown; params: Record<string, unknown> }[] = [];
     return {
+        calls,
         paginate: {
             // eslint-disable-next-line require-yield
-            async *iterator() {
+            async *iterator(fn: unknown, params: Record<string, unknown>) {
+                calls.push({ fn, params });
                 yield { data: files };
             },
         },
         rest: {
             pulls: {
-                // unused; iterator above ignores the function argument and just yields the data
-                listFiles: () => undefined,
+                listFiles: listFilesFn,
             },
         },
     };
@@ -277,6 +280,16 @@ describe('preCheck', () => {
         expect(fileList).toEqual(['src/api/users.ts']);
         const written = JSON.parse(await fs.readFile(outputPath, 'utf8')) as string[];
         expect(written).toEqual(['src/api/users.ts']);
+
+        // The paginate iterator must be invoked with the listFiles function and the PR-scoping params.
+        expect(github.calls).toHaveLength(1);
+        expect(github.calls[0]!.fn).toBe(github.rest.pulls.listFiles);
+        expect(github.calls[0]!.params).toMatchObject({
+            owner: 'apify',
+            repo: 'apify-core',
+            pull_number: 7,
+            per_page: 100,
+        });
     });
 
     it('skips removed files', async () => {
