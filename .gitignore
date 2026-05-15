@@ -1,0 +1,8 @@
+.DS_Store
+.idea
+.vscode
+.venv
+.mise.toml
+.mypy_cache
+node_modules/
+*.tsbuildinfo
