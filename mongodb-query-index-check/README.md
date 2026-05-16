@@ -115,6 +115,7 @@ The `severity-threshold` input controls which findings turn the check red.
 
 ## Limitations
 
+- **Fork PRs are rejected**: the action's Validate step fails fast when `head.repo` differs from `base.repo`. On `pull_request_target` this would otherwise hand a write-capable token to Claude while it analyses attacker-controlled diff content (prompt-injection risk); on `pull_request` it can't authenticate anyway. Internal PRs only.
 - **JS array methods**: the pre-filter regex matches `.find(`, `.findOne(`, etc. on any object, so `array.find(x => …)` still triggers Claude to look — Claude then disambiguates by inspecting the receiver. This errs on the side of running more often, never less.
 - **Dynamic collection access** (e.g. `db[name].findOne(...)`): Claude is instructed to skip findings where it can't determine the collection reliably.
 - **No support for the npm package source yet**: the published `@apify-packages/mongo-indexes` ships compiled `.js` + `.d.ts` and drops the comments that explain each index's intent, which materially degrades the review. If you need this, open an issue and we can add a `package` source that downloads sources from the published GitHub release.

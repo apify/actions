@@ -23,7 +23,9 @@ You are NOT here to do a general code review. Stay focused on indexes.
 
 ## What to look for
 
-For every changed or newly-added line inside `$CHANGED_FILES_PATH`, hunt for MongoDB collection method calls:
+In each file listed in `$CHANGED_FILES_PATH`, find diff hunks that contain at least one **added** line, then inspect **every** MongoDB collection method call inside or enclosing those hunks — including method-call tokens that sit on unchanged context lines but whose argument object has additions (e.g. a new filter field added inside an existing `Users.findOne({ ... })` call). Don't restrict the search to lines that start with `+` in the patch.
+
+MongoDB collection method calls to look for:
 
 - Reads: `.find(`, `.findOne(`, `.findOneAndUpdate(`, `.findOneAndDelete(`, `.findOneAndReplace(`, `.aggregate(`, `.countDocuments(`, `.estimatedDocumentCount(`, `.distinct(`, `.watch(`
 - Writes that filter: `.updateOne(`, `.updateMany(`, `.deleteOne(`, `.deleteMany(`, `.replaceOne(`, `.bulkWrite(`
@@ -65,7 +67,7 @@ Follow these steps in order:
 ### 1. Gather context
 
 - Read `$CHANGED_FILES_PATH` (a JSON array of file paths). Use `Read` or `cat`.
-- For each file, fetch its diff. Prefer the GitHub MCP server (e.g. `mcp__github__pull_request_read` with `get_diff` / `get_files`, passing owner+repo from `$REPO` and `pull_number: $PR_NUMBER`). If that tool isn't available, fall back to `gh pr diff $PR_NUMBER --repo $REPO -- <path>` via Bash. Restrict your analysis to lines **added or modified** in the after-state of the diff.
+- For each file, fetch its diff. Prefer the GitHub MCP server (e.g. `mcp__github__pull_request_read` with `get_diff` / `get_files`, passing owner+repo from `$REPO` and `pull_number: $PR_NUMBER`). If that tool isn't available, fall back to `gh pr diff $PR_NUMBER --repo $REPO -- <path>` via Bash. Focus on diff hunks that contain at least one added line — in those hunks, the after-state (added lines plus their unchanged context) is the surface to analyze; ignore hunks that contain only deletions.
 - For each MongoDB call you find, identify the collection and read `$MONGO_INDEXES_DIR/<collection-snake-case>.ts` to learn the available indexes. Use `Read` (preferred) or `cat` / `grep` / `find` on `$MONGO_INDEXES_DIR/*`. Don't read anything outside `$MONGO_INDEXES_DIR`.
 
 ### 2. Decide findings

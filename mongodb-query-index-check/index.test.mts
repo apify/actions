@@ -5,7 +5,7 @@ import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
-    extractAddedLines,
+    extractAfterStateOfChangedHunks,
     globToRegex,
     hasMongoCallInDiff,
     matchesAny,
@@ -81,8 +81,8 @@ describe('matchesAny', () => {
     });
 });
 
-describe('extractAddedLines', () => {
-    it('returns only `+` lines and strips the leading `+`', () => {
+describe('extractAfterStateOfChangedHunks', () => {
+    it('returns `+` and context lines from hunks with at least one addition', () => {
         const patch = [
             '@@ -1,3 +1,4 @@',
             ' context',
@@ -91,17 +91,37 @@ describe('extractAddedLines', () => {
             '+added two',
             ' more context',
         ].join('\n');
-        expect(extractAddedLines(patch)).toBe('added one\nadded two');
+        expect(extractAfterStateOfChangedHunks(patch)).toBe('context\nadded one\nadded two\nmore context');
     });
 
-    it('skips diff header `+++` lines', () => {
-        const patch = ['+++ b/src/file.ts', '@@ -0,0 +1,1 @@', '+const x = 1;'].join('\n');
-        expect(extractAddedLines(patch)).toBe('const x = 1;');
+    it('skips the file-header `+++` / `---` lines', () => {
+        const patch = [
+            '--- a/src/file.ts',
+            '+++ b/src/file.ts',
+            '@@ -0,0 +1,1 @@',
+            '+const x = 1;',
+        ].join('\n');
+        expect(extractAfterStateOfChangedHunks(patch)).toBe('const x = 1;');
     });
 
-    it('returns empty string when no additions', () => {
+    it('returns empty string when a hunk has only deletions', () => {
         const patch = '@@ -1,1 +0,0 @@\n-removed';
-        expect(extractAddedLines(patch)).toBe('');
+        expect(extractAfterStateOfChangedHunks(patch)).toBe('');
+    });
+
+    it('returns empty string for an empty patch', () => {
+        expect(extractAfterStateOfChangedHunks('')).toBe('');
+    });
+
+    it('skips deletion-only hunks but keeps content of mixed hunks in the same file', () => {
+        const patch = [
+            '@@ -1,1 +0,0 @@',
+            '-only deletion here',
+            '@@ -10,2 +10,3 @@',
+            ' context line',
+            '+added line',
+        ].join('\n');
+        expect(extractAfterStateOfChangedHunks(patch)).toBe('context line\nadded line');
     });
 });
 
@@ -121,15 +141,37 @@ describe('hasMongoCallInDiff', () => {
     });
 
     it('detects writes that filter (`updateMany`, `deleteOne`, `bulkWrite`)', () => {
-        expect(hasMongoCallInDiff('+await Users.updateMany({ removedAt: null }, { $set: { x: 1 } });')).toBe(
-            true,
-        );
-        expect(hasMongoCallInDiff('+await Users.deleteOne({ _id: id });')).toBe(true);
-        expect(hasMongoCallInDiff('+await Users.bulkWrite(ops);')).toBe(true);
+        expect(
+            hasMongoCallInDiff('@@ -0,0 +1,1 @@\n+await Users.updateMany({ removedAt: null }, { $set: { x: 1 } });'),
+        ).toBe(true);
+        expect(hasMongoCallInDiff('@@ -0,0 +1,1 @@\n+await Users.deleteOne({ _id: id });')).toBe(true);
+        expect(hasMongoCallInDiff('@@ -0,0 +1,1 @@\n+await Users.bulkWrite(ops);')).toBe(true);
     });
 
     it('does not match if the call is only on a removed line', () => {
         const patch = '@@ -1,1 +0,0 @@\n-await Users.findOne({ _id: id });';
+        expect(hasMongoCallInDiff(patch)).toBe(false);
+    });
+
+    it('detects a method call on an unchanged context line when a filter field is added inside', () => {
+        const patch = [
+            '@@ -1,4 +1,5 @@',
+            ' await Users.findOne({',
+            '     _id: id,',
+            '+    newField: x,',
+            ' });',
+        ].join('\n');
+        expect(hasMongoCallInDiff(patch)).toBe(true);
+    });
+
+    it('does not match when a method call lives in a deletion-only hunk elsewhere in the file', () => {
+        const patch = [
+            '@@ -1,1 +0,0 @@',
+            '-await Users.findOne({ _id: id });',
+            '@@ -10,1 +10,2 @@',
+            ' const y = 1;',
+            '+const z = 2;',
+        ].join('\n');
         expect(hasMongoCallInDiff(patch)).toBe(false);
     });
 

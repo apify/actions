@@ -86,13 +86,24 @@ runs:
       shell: bash
       env:
         EVENT_NAME: ${{ github.event_name }}
+        HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        BASE_REPO: ${{ github.event.pull_request.base.repo.full_name }}
         SOURCE: ${{ inputs.mongo-indexes-source }}
         LOCAL_PATH: ${{ inputs.mongo-indexes-path }}
         THRESHOLD: ${{ inputs.severity-threshold }}
+        REQUEST_CHANGES_INPUT: ${{ inputs.request-changes }}
       run: |
         set -euo pipefail
         if [ "$EVENT_NAME" != "pull_request" ] && [ "$EVENT_NAME" != "pull_request_target" ]; then
           echo "::error::This action only runs on 'pull_request' or 'pull_request_target' events (got '$EVENT_NAME')."
+          exit 1
+        fi
+        # Reject fork PRs: on `pull_request_target`, Claude would receive write-capable secrets
+        # (anthropic-api-key, apify-core-token) while analyzing attacker-controlled diff content,
+        # which is a prompt-injection vector. On `pull_request` it's mostly harmless (secrets aren't
+        # exposed to forks) but we still bail out so the action behaves predictably.
+        if [ -n "$HEAD_REPO" ] && [ -n "$BASE_REPO" ] && [ "$HEAD_REPO" != "$BASE_REPO" ]; then
+          echo "::error::This action does not support pull requests from forks ('$HEAD_REPO' → '$BASE_REPO'). Re-run from a branch in the base repository."
           exit 1
         fi
         case "$SOURCE" in
@@ -107,6 +118,14 @@ runs:
           low|medium|high|critical) ;;
           *) echo "::error::Invalid severity-threshold '$THRESHOLD' (must be 'low', 'medium', 'high' or 'critical')."; exit 1 ;;
         esac
+        case "$REQUEST_CHANGES_INPUT" in
+          true|false) ;;
+          *) echo "::error::Invalid request-changes '$REQUEST_CHANGES_INPUT' (must be the literal string 'true' or 'false')."; exit 1 ;;
+        esac
+        # Seed the shared result file path now so every downstream step (including Finalize, which
+        # runs with `if: always()`) sees a defined $RESULT_PATH even if a later step bails out.
+        echo "RESULT_PATH=${RUNNER_TEMP}/mongo-index-result.txt" >> "$GITHUB_ENV"
+        printf 'none' > "${RUNNER_TEMP}/mongo-index-result.txt"
 
     - name: Pre-check PR diff
       id: pre-check
@@ -142,11 +161,6 @@ runs:
         APIFY_CORE_REF: ${{ inputs.apify-core-ref }}
       run: |
         set -euo pipefail
-        # Seed the shared result file path first so the finalize step has something to read even if
-        # the rest of this step fails midway.
-        echo "RESULT_PATH=${RUNNER_TEMP}/mongo-index-result.txt" >> "$GITHUB_ENV"
-        printf 'none' > "${RUNNER_TEMP}/mongo-index-result.txt"
-
         case "$SOURCE" in
           apify-core)
             indexes_dir="${GITHUB_WORKSPACE}/__mongo_index_check_apify_core/src/packages/mongo-indexes/src"

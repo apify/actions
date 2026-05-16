@@ -74,23 +74,40 @@ export function matchesAny(filename: string, patterns: RegExp[]): boolean {
     return patterns.some((re) => re.test(filename));
 }
 
-/**
- * Extract the lines added (or modified into) the after-state of a unified diff patch.
- * Skips the patch header (`+++` line) and only returns content of `+` lines without the leading `+`.
- */
-export function extractAddedLines(patch: string): string {
-    const lines = patch.split('\n');
-    const added: string[] = [];
-    for (const line of lines) {
-        if (line.startsWith('+++')) continue;
-        if (line.startsWith('+')) added.push(line.slice(1));
+// Return the after-state content of every hunk in `patch` that contains at least one addition.
+// This includes both `+` lines (the additions themselves) and ` ` context lines from those hunks,
+// so a query whose `.findOne(` call sits on an unchanged line gets scanned when a filter field
+// is added inside its argument object. Hunks that only contain `-` deletions are skipped — there's
+// no after-state query to review.
+export function extractAfterStateOfChangedHunks(patch: string): string {
+    if (!patch) return '';
+    const hunks: { lines: string[]; hasAddition: boolean }[] = [];
+    let current: { lines: string[]; hasAddition: boolean } | null = null;
+    for (const line of patch.split('\n')) {
+        if (line.startsWith('@@')) {
+            current = { lines: [], hasAddition: false };
+            hunks.push(current);
+            continue;
+        }
+        if (!current) continue;
+        if (line.startsWith('+++') || line.startsWith('---')) continue;
+        if (line.startsWith('-')) continue;
+        if (line.startsWith('+')) {
+            current.hasAddition = true;
+            current.lines.push(line.slice(1));
+        } else if (line.startsWith(' ')) {
+            current.lines.push(line.slice(1));
+        }
     }
-    return added.join('\n');
+    return hunks
+        .filter((h) => h.hasAddition)
+        .flatMap((h) => h.lines)
+        .join('\n');
 }
 
 export function hasMongoCallInDiff(patch: string): boolean {
     if (!patch) return false;
-    return MONGO_METHOD_REGEX.test(extractAddedLines(patch));
+    return MONGO_METHOD_REGEX.test(extractAfterStateOfChangedHunks(patch));
 }
 
 interface PreCheckEnv {
