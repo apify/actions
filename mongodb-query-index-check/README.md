@@ -4,7 +4,7 @@ Reviews a pull request for **MongoDB queries that don't use an appropriate index
 
 1. Cross-references the query's filter and sort fields against the canonical index definitions in [`@apify-packages/mongo-indexes`](https://github.com/apify/apify-core/tree/develop/src/packages/mongo-indexes/src) (sparse-fetched from `apify/apify-core@develop`, or read straight from the caller's workspace when the action runs on `apify-core` itself).
 2. Invokes [`anthropics/claude-code-action`](https://github.com/anthropics/claude-code-action) (recent Opus) to apply an ESR-aware rubric (Equality → Sort → Range) and post inline review comments with severity tags (`🔴 critical`, `🟠 high`, `🟡 medium`, `🟢 low`).
-3. Optionally fails the check when findings meet a configurable severity threshold — useful as a required check in branch protection.
+3. Fails the check whenever a finding is reported (unless `request-changes: false`) — useful as a required check in branch protection.
 
 The action runs a cheap pre-filter first (it lists PR files, glob-matches, and grep-checks for MongoDB call patterns in changed hunks) and only invokes Claude when something relevant changed. Repos that never touch MongoDB pay only the GitHub API cost of `pulls.listFiles`.
 
@@ -72,8 +72,7 @@ jobs:
 | `apify-core-token` | no | _(empty)_ | When set, fetches `mongo-indexes` from `apify/apify-core@develop`. When empty, the action assumes it is running on `apify-core` and reads `src/packages/mongo-indexes/src` from the workspace. |
 | `max-turns` | no | `30` | Maximum turns Claude may take. |
 | `paths` | no | TS/JS source files | Comma-separated globs to include. |
-| `severity-threshold` | no | `high` | Minimum severity that fails the check (`low`, `medium`, `high`, `critical`). |
-| `request-changes` | no | `true` | When `true`, fail the check at the threshold. When `false`, comment only. |
+| `request-changes` | no | `true` | When `true`, fail the check on any finding. When `false`, comment only. |
 
 ## Outputs
 
@@ -85,12 +84,12 @@ jobs:
 
 ## How it works
 
-1. **Validate inputs**: checks the event is `pull_request[_target]`, rejects fork PRs, validates `severity-threshold` and `request-changes`, and seeds `$RESULT_PATH` for the Finalize step.
+1. **Validate inputs**: checks the event is `pull_request[_target]`, rejects fork PRs, validates `request-changes`, and seeds `$RESULT_PATH` for the Finalize step.
 2. **Pre-filter** (`index.mts` → `preCheck()`): pages through `pulls.listFiles`, applies the `paths` glob and a fixed exclude list (`node_modules`, `dist`, `build`, tests, `mongo-indexes` package itself), and greps for MongoDB collection-method patterns in changed hunks. If nothing matches, the action sets `should-run=false` and exits before spending Anthropic credits.
 3. **Source resolution**: either sparse-checkouts `apify/apify-core@develop` (when `apify-core-token` is set) into a workspace subdir, or points at the caller's `src/packages/mongo-indexes/src` directly.
-4. **Prompt render**: substitutes the changed-files path, mongo-indexes directory, PR metadata, and severity policy into `prompts/review.md` via envsubst.
+4. **Prompt render**: substitutes the changed-files path, mongo-indexes directory, PR metadata, and request-changes mode into `prompts/review.md` via envsubst.
 5. **Claude Code run**: invokes `anthropics/claude-code-action@v1` (recent Opus) with a tight allowlist — GitHub MCP for pull-request read and pending-review tools, `Read`, `Write` (for the result file), and a handful of read-only `Bash(...)` commands.
-6. **Finalize**: reads the single-word severity Claude wrote to `${RUNNER_TEMP}/mongo-index-result.txt`. Exits non-zero when `request-changes: true` and the severity meets the threshold; otherwise succeeds.
+6. **Finalize**: reads the single-word severity Claude wrote to `${RUNNER_TEMP}/mongo-index-result.txt`. Exits non-zero when `request-changes: true` and Claude reported any finding; otherwise succeeds.
 
 ## Severity rubric
 
@@ -101,7 +100,7 @@ jobs:
 | 🟡 medium | Index used but inefficient: low selectivity, likely poor read/return ratio, wrong sort direction, `$or` branch without an index. |
 | 🟢 low | Stylistic: tighter partial filter, covered-query opportunity, missing index name. |
 
-The `severity-threshold` input controls which findings turn the check red.
+Any finding turns the check red unless `request-changes` is set to `false`.
 
 ## Limitations
 

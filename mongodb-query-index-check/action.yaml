@@ -2,7 +2,7 @@ name: 'MongoDB Query Index Check'
 description: >-
   Reviews a pull request for MongoDB queries that don't use an appropriate index. Cross-references
   changed queries against the canonical mongo-indexes definitions, then asks Claude Code to post
-  inline review comments and (optionally) fail the check when high-severity issues are found.
+  inline review comments and (optionally) fail the check when any finding is reported.
 
 inputs:
   anthropic-api-key:
@@ -30,12 +30,8 @@ inputs:
       Default covers TypeScript and JavaScript source files.
     required: false
     default: '**/*.ts,**/*.mts,**/*.cts,**/*.tsx,**/*.js,**/*.mjs,**/*.cjs,**/*.jsx'
-  severity-threshold:
-    description: 'Minimum severity that fails the check. One of `low`, `medium`, `high`, `critical`. Default `high`.'
-    required: false
-    default: 'high'
   request-changes:
-    description: 'If `true`, fail the check when findings meet the severity threshold. If `false`, leave comments only.'
+    description: 'If `true`, fail the check when any finding is reported. If `false`, leave comments only.'
     required: false
     default: 'true'
 
@@ -59,7 +55,6 @@ runs:
         EVENT_NAME: ${{ github.event_name }}
         HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
         BASE_REPO: ${{ github.event.pull_request.base.repo.full_name }}
-        THRESHOLD: ${{ inputs.severity-threshold }}
         REQUEST_CHANGES_INPUT: ${{ inputs.request-changes }}
       run: |
         set -euo pipefail
@@ -75,16 +70,11 @@ runs:
           echo "::error::This action does not support pull requests from forks ('$HEAD_REPO' → '$BASE_REPO'). Re-run from a branch in the base repository."
           exit 1
         fi
-        case "$THRESHOLD" in
-          low|medium|high|critical) ;;
-          *) echo "::error::Invalid severity-threshold '$THRESHOLD' (must be 'low', 'medium', 'high' or 'critical')."; exit 1 ;;
-        esac
         case "$REQUEST_CHANGES_INPUT" in
           true|false) ;;
           *) echo "::error::Invalid request-changes '$REQUEST_CHANGES_INPUT' (must be the literal string 'true' or 'false')."; exit 1 ;;
         esac
-        # Seed the shared result file path now so every downstream step (including Finalize, which
-        # runs with `if: always()`) sees a defined $RESULT_PATH even if a later step bails out.
+        # Seed the result file so Finalize (runs with `if: always()`) always sees a defined $RESULT_PATH.
         echo "RESULT_PATH=${RUNNER_TEMP}/mongo-index-result.txt" >> "$GITHUB_ENV"
         printf 'none' > "${RUNNER_TEMP}/mongo-index-result.txt"
 
@@ -145,12 +135,11 @@ runs:
         BASE_SHA: ${{ github.event.pull_request.base.sha }}
         HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         CHANGED_FILES_PATH: ${{ runner.temp }}/mongo-index-changed-files.json
-        SEVERITY_THRESHOLD: ${{ inputs.severity-threshold }}
         REQUEST_CHANGES_MODE: ${{ inputs.request-changes }}
       run: |
         set -euo pipefail
         prompt_file="${RUNNER_TEMP}/mongo-index-prompt.md"
-        envsubst '$PR_NUMBER $REPO $BASE_SHA $HEAD_SHA $MONGO_INDEXES_DIR $CHANGED_FILES_PATH $RESULT_PATH $SEVERITY_THRESHOLD $REQUEST_CHANGES_MODE' \
+        envsubst '$PR_NUMBER $REPO $BASE_SHA $HEAD_SHA $MONGO_INDEXES_DIR $CHANGED_FILES_PATH $RESULT_PATH $REQUEST_CHANGES_MODE' \
           < "${GITHUB_ACTION_PATH}/prompts/review.md" \
           > "$prompt_file"
         delimiter="EOF_${RANDOM}${RANDOM}${RANDOM}"
@@ -178,38 +167,20 @@ runs:
       if: always() && steps.pre-check.outputs.should-run == 'true'
       shell: bash
       env:
-        INPUT_SEVERITY_THRESHOLD: ${{ inputs.severity-threshold }}
         INPUT_REQUEST_CHANGES: ${{ inputs.request-changes }}
       run: |
         set -euo pipefail
 
-        severity_rank() {
-          case "$1" in
-            critical) echo 4 ;;
-            high)     echo 3 ;;
-            medium)   echo 2 ;;
-            low)      echo 1 ;;
-            *)        echo 0 ;;
-          esac
-        }
-
-        if [ -f "$RESULT_PATH" ]; then
-          max_severity="$(tr -d '[:space:]' < "$RESULT_PATH" | tr '[:upper:]' '[:lower:]')"
-        else
-          max_severity="none"
-        fi
+        max_severity="$(tr -d '[:space:]' < "$RESULT_PATH" | tr '[:upper:]' '[:lower:]')"
         case "$max_severity" in
           none|low|medium|high|critical) ;;
           *) echo "::warning::Unexpected severity value '${max_severity}' in result file, treating as 'none'."; max_severity="none" ;;
         esac
 
-        threshold_rank=$(severity_rank "$INPUT_SEVERITY_THRESHOLD")
-        max_rank=$(severity_rank "$max_severity")
-
         echo "max-severity=${max_severity}" >> "$GITHUB_OUTPUT"
-        echo "Max severity from review: ${max_severity} (rank ${max_rank}); threshold: ${INPUT_SEVERITY_THRESHOLD} (rank ${threshold_rank})."
+        echo "Max severity from review: ${max_severity}."
 
-        if [ "$INPUT_REQUEST_CHANGES" = "true" ] && [ "$max_rank" -ge "$threshold_rank" ] && [ "$max_rank" -gt 0 ]; then
-          echo "::error::MongoDB index review found issues at severity '${max_severity}', which meets the configured threshold '${INPUT_SEVERITY_THRESHOLD}'. See the inline review comments on this PR."
+        if [ "$INPUT_REQUEST_CHANGES" = "true" ] && [ "$max_severity" != "none" ]; then
+          echo "::error::MongoDB index review found '${max_severity}' issues. See the inline review comments on this PR."
           exit 1
         fi
