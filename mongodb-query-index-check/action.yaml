@@ -1,0 +1,186 @@
+name: 'MongoDB Query Index Check'
+description: >-
+  Reviews a pull request for MongoDB queries that don't use an appropriate index. Cross-references
+  changed queries against the canonical mongo-indexes definitions, then asks Claude Code to post
+  inline review comments and (optionally) fail the check when any finding is reported.
+
+inputs:
+  anthropic-api-key:
+    description: 'Anthropic API key passed through to anthropics/claude-code-action.'
+    required: true
+  github-token:
+    description: 'GitHub token used to post review comments. Defaults to GITHUB_TOKEN.'
+    required: false
+    default: ${{ github.token }}
+  apify-core-token:
+    description: >-
+      GitHub token with `contents: read` on apify/apify-core. When set, the action sparse-checkouts
+      `src/packages/mongo-indexes/src` from apify/apify-core@develop. When empty (the default), the
+      action assumes it is running on apify/apify-core itself and reads the indexes from the
+      caller's already-checked-out workspace at `src/packages/mongo-indexes/src`.
+    required: false
+    default: ''
+  max-turns:
+    description: 'Maximum turns Claude may take. Default 30.'
+    required: false
+    default: '30'
+  paths:
+    description: >-
+      Comma-separated glob patterns of files to inspect (matched against PR file paths).
+      Default covers TypeScript and JavaScript source files.
+    required: false
+    default: '**/*.ts,**/*.mts,**/*.cts,**/*.tsx,**/*.js,**/*.mjs,**/*.cjs,**/*.jsx'
+  request-changes:
+    description: 'If `true`, fail the check when any finding is reported. If `false`, leave comments only.'
+    required: false
+    default: 'true'
+
+outputs:
+  should-run:
+    description: '`true` when MongoDB-related changes were detected (and Claude was invoked).'
+    value: ${{ steps.pre-check.outputs.should-run }}
+  changed-files:
+    description: 'JSON array of files Claude reviewed.'
+    value: ${{ steps.pre-check.outputs.changed-files }}
+  max-severity:
+    description: 'Highest severity in the review: one of `none`, `low`, `medium`, `high`, `critical`.'
+    value: ${{ steps.finalize.outputs.max-severity }}
+
+runs:
+  using: composite
+  steps:
+    - name: Validate inputs
+      shell: bash
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+        HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        BASE_REPO: ${{ github.event.pull_request.base.repo.full_name }}
+        REQUEST_CHANGES_INPUT: ${{ inputs.request-changes }}
+      run: |
+        set -euo pipefail
+        if [ "$EVENT_NAME" != "pull_request" ] && [ "$EVENT_NAME" != "pull_request_target" ]; then
+          echo "::error::This action only runs on 'pull_request' or 'pull_request_target' events (got '$EVENT_NAME')."
+          exit 1
+        fi
+        # Reject fork PRs: on `pull_request_target`, Claude would receive write-capable secrets
+        # (anthropic-api-key, apify-core-token) while analyzing attacker-controlled diff content,
+        # which is a prompt-injection vector. On `pull_request` it's mostly harmless (secrets aren't
+        # exposed to forks) but we still bail out so the action behaves predictably.
+        if [ -n "$HEAD_REPO" ] && [ -n "$BASE_REPO" ] && [ "$HEAD_REPO" != "$BASE_REPO" ]; then
+          echo "::error::This action does not support pull requests from forks ('$HEAD_REPO' → '$BASE_REPO'). Re-run from a branch in the base repository."
+          exit 1
+        fi
+        case "$REQUEST_CHANGES_INPUT" in
+          true|false) ;;
+          *) echo "::error::Invalid request-changes '$REQUEST_CHANGES_INPUT' (must be the literal string 'true' or 'false')."; exit 1 ;;
+        esac
+        # Seed the result file so Finalize (runs with `if: always()`) always sees a defined $RESULT_PATH.
+        echo "RESULT_PATH=${RUNNER_TEMP}/mongo-index-result.txt" >> "$GITHUB_ENV"
+        printf 'none' > "${RUNNER_TEMP}/mongo-index-result.txt"
+
+    - name: Pre-check PR diff
+      id: pre-check
+      uses: actions/github-script@v8
+      env:
+        INPUT_PATHS: ${{ inputs.paths }}
+        INPUT_PATHS_IGNORE: '**/node_modules/**,**/dist/**,**/build/**,**/test/**,**/__tests__/**,**/*.test.*,**/*.spec.*,**/mongo-indexes/**'
+        OUTPUT_CHANGED_FILES_PATH: ${{ runner.temp }}/mongo-index-changed-files.json
+      with:
+        github-token: ${{ inputs.github-token }}
+        script: |
+          const { preCheck } = require('${{ github.action_path }}/index.mts');
+          await preCheck({ github, context, core, env: process.env });
+
+    - name: Checkout apify-core mongo-indexes
+      if: steps.pre-check.outputs.should-run == 'true' && inputs.apify-core-token != ''
+      uses: actions/checkout@v6
+      with:
+        repository: apify/apify-core
+        ref: develop
+        token: ${{ inputs.apify-core-token }}
+        path: __mongo_index_check_apify_core
+        sparse-checkout: src/packages/mongo-indexes/src
+        sparse-checkout-cone-mode: false
+        fetch-depth: 1
+
+    - name: Resolve mongo-indexes directory
+      if: steps.pre-check.outputs.should-run == 'true'
+      shell: bash
+      env:
+        APIFY_CORE_TOKEN: ${{ inputs.apify-core-token }}
+      run: |
+        set -euo pipefail
+        if [ -n "$APIFY_CORE_TOKEN" ]; then
+          indexes_dir="${GITHUB_WORKSPACE}/__mongo_index_check_apify_core/src/packages/mongo-indexes/src"
+          origin_label="apify-core@develop"
+        else
+          indexes_dir="${GITHUB_WORKSPACE}/src/packages/mongo-indexes/src"
+          origin_label="local workspace (assuming caller is apify-core)"
+        fi
+        if [ ! -d "$indexes_dir" ]; then
+          echo "::error::Could not find mongo-indexes source directory at: $indexes_dir"
+          exit 1
+        fi
+        file_count=$(find "$indexes_dir" -maxdepth 2 -type f -name '*.ts' | wc -l)
+        echo "Resolved mongo-indexes from ${origin_label}: ${indexes_dir} (${file_count} .ts file(s))."
+        echo "MONGO_INDEXES_DIR=${indexes_dir}" >> "$GITHUB_ENV"
+
+    - name: Render Claude prompt
+      id: render
+      if: steps.pre-check.outputs.should-run == 'true'
+      shell: bash
+      env:
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        REPO: ${{ github.repository }}
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        CHANGED_FILES_PATH: ${{ runner.temp }}/mongo-index-changed-files.json
+        REQUEST_CHANGES_MODE: ${{ inputs.request-changes }}
+      run: |
+        set -euo pipefail
+        prompt_file="${RUNNER_TEMP}/mongo-index-prompt.md"
+        envsubst '$PR_NUMBER $REPO $BASE_SHA $HEAD_SHA $MONGO_INDEXES_DIR $CHANGED_FILES_PATH $RESULT_PATH $REQUEST_CHANGES_MODE' \
+          < "${GITHUB_ACTION_PATH}/prompts/review.md" \
+          > "$prompt_file"
+        delimiter="EOF_${RANDOM}${RANDOM}${RANDOM}"
+        {
+          echo "prompt<<${delimiter}"
+          cat "$prompt_file"
+          echo
+          echo "${delimiter}"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Run Claude Code review
+      if: steps.pre-check.outputs.should-run == 'true'
+      uses: anthropics/claude-code-action@v1
+      with:
+        anthropic_api_key: ${{ inputs.anthropic-api-key }}
+        github_token: ${{ inputs.github-token }}
+        prompt: ${{ steps.render.outputs.prompt }}
+        claude_args: >-
+          --max-turns ${{ inputs.max-turns }}
+          --model claude-opus-4-7
+          --allowedTools "mcp__github__pull_request_read,mcp__github__pull_request_review_write,mcp__github__create_pending_pull_request_review,mcp__github__submit_pending_pull_request_review,mcp__github__add_comment_to_pending_review,mcp__github_inline_comment__create_inline_comment,Read,Write,Bash(ls:*),Bash(cat:*),Bash(grep:*),Bash(rg:*),Bash(find:*),Bash(test:*),Bash(echo:*),Bash(printf:*),Bash(head:*),Bash(tail:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr review:*),Bash(gh api:*)"
+
+    - name: Finalize review result
+      id: finalize
+      if: always() && steps.pre-check.outputs.should-run == 'true'
+      shell: bash
+      env:
+        INPUT_REQUEST_CHANGES: ${{ inputs.request-changes }}
+      run: |
+        set -euo pipefail
+
+        max_severity="$(tr -d '[:space:]' < "$RESULT_PATH" | tr '[:upper:]' '[:lower:]')"
+        case "$max_severity" in
+          none|low|medium|high|critical) ;;
+          *) echo "::warning::Unexpected severity value '${max_severity}' in result file, treating as 'none'."; max_severity="none" ;;
+        esac
+
+        echo "max-severity=${max_severity}" >> "$GITHUB_OUTPUT"
+        echo "Max severity from review: ${max_severity}."
+
+        if [ "$INPUT_REQUEST_CHANGES" = "true" ] && [ "$max_severity" != "none" ]; then
+          echo "::error::MongoDB index review found '${max_severity}' issues. See the inline review comments on this PR."
+          exit 1
+        fi
