@@ -2,19 +2,15 @@
 
 Reviews a pull request for **MongoDB queries that don't use an appropriate index**. For every changed or new MongoDB call (`.find`, `.findOne`, `.aggregate`, `.update*`, `.delete*`, `.findOneAnd*`, `.countDocuments`, `.distinct`, …) the action:
 
-1. Cross-references the query's filter and sort fields against the canonical index definitions in [`@apify-packages/mongo-indexes`](https://github.com/apify/apify-core/tree/develop/src/packages/mongo-indexes/src) (sparse-fetched from `apify/apify-core`, or loaded from a local path).
-2. Invokes [`anthropics/claude-code-action`](https://github.com/anthropics/claude-code-action) to apply an ESR-aware rubric (Equality → Sort → Range) and post inline review comments with severity tags (`🔴 critical`, `🟠 high`, `🟡 medium`, `🟢 low`).
+1. Cross-references the query's filter and sort fields against the canonical index definitions in [`@apify-packages/mongo-indexes`](https://github.com/apify/apify-core/tree/develop/src/packages/mongo-indexes/src) (sparse-fetched from `apify/apify-core@develop`, or read straight from the caller's workspace when the action runs on `apify-core` itself).
+2. Invokes [`anthropics/claude-code-action`](https://github.com/anthropics/claude-code-action) (recent Opus) to apply an ESR-aware rubric (Equality → Sort → Range) and post inline review comments with severity tags (`🔴 critical`, `🟠 high`, `🟡 medium`, `🟢 low`).
 3. Optionally fails the check when findings meet a configurable severity threshold — useful as a required check in branch protection.
 
-The action runs a cheap pre-filter first (it lists PR files, glob-matches, and grep-checks for MongoDB call patterns in added lines) and only invokes Claude when something relevant changed. Repos that never touch MongoDB pay only the GitHub API cost of `pulls.listFiles`.
-
-## When to use
-
-Add this to repos that read or write to the Apify MongoDB cluster — primarily `apify-core`, `apify-proxy`, `apify-web`, but any internal repo that imports a `mongoClient.<Collection>` works.
+The action runs a cheap pre-filter first (it lists PR files, glob-matches, and grep-checks for MongoDB call patterns in changed hunks) and only invokes Claude when something relevant changed. Repos that never touch MongoDB pay only the GitHub API cost of `pulls.listFiles`.
 
 ## Usage
 
-### `apify-core` (uses its own local mongo-indexes)
+### `apify-core` (the action reads its own workspace)
 
 ```yaml
 # .github/workflows/mongodb_query_index_check.yaml
@@ -37,11 +33,9 @@ jobs:
       - uses: apify/actions/mongodb-query-index-check@v1
         with:
           anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
-          mongo-indexes-source: local
-          mongo-indexes-path: src/packages/mongo-indexes/src
 ```
 
-### `apify-proxy`, `apify-web`, … (fetches the indexes from `apify-core`)
+### `apify-proxy`, `apify-web`, … (the action fetches indexes from `apify-core`)
 
 ```yaml
 # .github/workflows/mongodb_query_index_check.yaml
@@ -64,7 +58,8 @@ jobs:
       - uses: apify/actions/mongodb-query-index-check@v1
         with:
           anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
-          # PAT with `contents: read` on apify/apify-core (the default GITHUB_TOKEN only sees the current repo).
+          # PAT with `contents: read` on apify/apify-core. The default GITHUB_TOKEN only sees the
+          # current repo, so without this the action would fail to fetch the indexes.
           apify-core-token: ${{ secrets.APIFY_CORE_RO_TOKEN }}
 ```
 
@@ -74,17 +69,11 @@ jobs:
 | --- | --- | --- | --- |
 | `anthropic-api-key` | yes | — | Anthropic API key passed through to `anthropics/claude-code-action`. |
 | `github-token` | no | `${{ github.token }}` | Token used to post review comments. |
-| `mongo-indexes-source` | no | `apify-core` | `apify-core` (sparse-checkout from `apify/apify-core`) or `local` (use a path in the workspace). |
-| `apify-core-ref` | no | `develop` | Ref to fetch when source is `apify-core`. |
-| `apify-core-token` | no | _(falls back to `github-token`)_ | Token with `contents: read` on `apify/apify-core`. Required when calling from another repo. |
-| `mongo-indexes-path` | conditional | — | Required when source is `local`. Path to the indexes source directory (e.g. `src/packages/mongo-indexes/src`). |
-| `claude-model` | no | _(action default)_ | Override the Claude model (e.g. `claude-sonnet-4-6`). |
+| `apify-core-token` | no | _(empty)_ | When set, fetches `mongo-indexes` from `apify/apify-core@develop`. When empty, the action assumes it is running on `apify-core` and reads `src/packages/mongo-indexes/src` from the workspace. |
 | `max-turns` | no | `30` | Maximum turns Claude may take. |
 | `paths` | no | TS/JS source files | Comma-separated globs to include. |
-| `paths-ignore` | no | test/build/vendor/`**/mongo-indexes/**` | Comma-separated globs to exclude. |
 | `severity-threshold` | no | `high` | Minimum severity that fails the check (`low`, `medium`, `high`, `critical`). |
 | `request-changes` | no | `true` | When `true`, fail the check at the threshold. When `false`, comment only. |
-| `extra-prompt` | no | — | Extra instructions appended to the Claude prompt (e.g. "skip files under `src/legacy/**`"). |
 
 ## Outputs
 
@@ -96,11 +85,12 @@ jobs:
 
 ## How it works
 
-1. **Pre-filter** (`index.mts` → `preCheck()`): pages through `pulls.listFiles`, applies the `paths` / `paths-ignore` globs, and greps for MongoDB collection-method patterns in **added** lines only. If nothing matches, the action sets `should-run=false` and exits before spending any Anthropic credits.
-2. **Source resolution**: either sparse-checkouts `apify-core` (just `src/packages/mongo-indexes/src/*`, depth 1) to `${RUNNER_TEMP}/apify-core`, or points at a path inside the workspace.
-3. **Prompt render**: substitutes the changed-files path, mongo-indexes directory, PR metadata, and severity policy into `prompts/review.md`.
-4. **Claude Code run**: invokes `anthropics/claude-code-action@v1` with a tight allowlist — GitHub MCP for `pull_request_read` and pending-review tools, `Read`, `Write` (for the result file), and a handful of read-only `Bash(...)` commands (`cat`, `grep`, `find`, `ls`, …). Claude reads the diff, reads the relevant `<collection>.ts` files, applies the ESR rubric, and either opens a pending review with inline comments or stays silent.
-5. **Finalize**: reads the single-word severity Claude wrote to `${RUNNER_TEMP}/mongo-index-result.txt`. Exits non-zero when `request-changes: true` and the severity meets the threshold; otherwise succeeds.
+1. **Validate inputs**: checks the event is `pull_request[_target]`, rejects fork PRs, validates `severity-threshold` and `request-changes`, and seeds `$RESULT_PATH` for the Finalize step.
+2. **Pre-filter** (`index.mts` → `preCheck()`): pages through `pulls.listFiles`, applies the `paths` glob and a fixed exclude list (`node_modules`, `dist`, `build`, tests, `mongo-indexes` package itself), and greps for MongoDB collection-method patterns in changed hunks. If nothing matches, the action sets `should-run=false` and exits before spending Anthropic credits.
+3. **Source resolution**: either sparse-checkouts `apify/apify-core@develop` (when `apify-core-token` is set) into a workspace subdir, or points at the caller's `src/packages/mongo-indexes/src` directly.
+4. **Prompt render**: substitutes the changed-files path, mongo-indexes directory, PR metadata, and severity policy into `prompts/review.md` via envsubst.
+5. **Claude Code run**: invokes `anthropics/claude-code-action@v1` (recent Opus) with a tight allowlist — GitHub MCP for pull-request read and pending-review tools, `Read`, `Write` (for the result file), and a handful of read-only `Bash(...)` commands.
+6. **Finalize**: reads the single-word severity Claude wrote to `${RUNNER_TEMP}/mongo-index-result.txt`. Exits non-zero when `request-changes: true` and the severity meets the threshold; otherwise succeeds.
 
 ## Severity rubric
 
@@ -118,7 +108,6 @@ The `severity-threshold` input controls which findings turn the check red.
 - **Fork PRs are rejected**: the action's Validate step fails fast when `head.repo` differs from `base.repo`. On `pull_request_target` this would otherwise hand a write-capable token to Claude while it analyses attacker-controlled diff content (prompt-injection risk); on `pull_request` it can't authenticate anyway. Internal PRs only.
 - **JS array methods**: the pre-filter regex matches `.find(`, `.findOne(`, etc. on any object, so `array.find(x => …)` still triggers Claude to look — Claude then disambiguates by inspecting the receiver. This errs on the side of running more often, never less.
 - **Dynamic collection access** (e.g. `db[name].findOne(...)`): Claude is instructed to skip findings where it can't determine the collection reliably.
-- **No support for the npm package source yet**: the published `@apify-packages/mongo-indexes` ships compiled `.js` + `.d.ts` and drops the comments that explain each index's intent, which materially degrades the review. If you need this, open an issue and we can add a `package` source that downloads sources from the published GitHub release.
 
 ## Releasing a new version
 
