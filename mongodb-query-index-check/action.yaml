@@ -21,9 +21,9 @@ inputs:
     required: false
     default: ''
   max-turns:
-    description: 'Maximum turns Claude may take. Default 30.'
+    description: 'Maximum turns Claude may take. Default 100.'
     required: false
-    default: '30'
+    default: '100'
   paths:
     description: >-
       Comma-separated glob patterns of files to inspect (matched against PR file paths).
@@ -157,6 +157,10 @@ runs:
         anthropic_api_key: ${{ inputs.anthropic-api-key }}
         github_token: ${{ inputs.github-token }}
         prompt: ${{ steps.render.outputs.prompt }}
+        # Dump the full conversation trace (every tool call, response, and permission denial)
+        # to the workflow log. Costs nothing extra, makes debugging tractable when Claude hits
+        # the turn cap or gets blocked by an allowlist gap.
+        show_full_output: true
         claude_args: >-
           --max-turns ${{ inputs.max-turns }}
           --model claude-opus-4-7

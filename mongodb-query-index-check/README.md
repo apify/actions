@@ -70,7 +70,7 @@ jobs:
 | `anthropic-api-key` | yes | — | Anthropic API key passed through to `anthropics/claude-code-action`. |
 | `github-token` | no | `${{ github.token }}` | Token used to post review comments. |
 | `apify-core-token` | no | _(empty)_ | When set, fetches `mongo-indexes` from `apify/apify-core@develop`. When empty, the action assumes it is running on `apify-core` and reads `src/packages/mongo-indexes/src` from the workspace. |
-| `max-turns` | no | `30` | Maximum turns Claude may take. |
+| `max-turns` | no | `100` | Maximum turns Claude may take. The default headroom fits large multi-file PRs; Claude only spends what it needs. |
 | `paths` | no | TS/JS source files | Comma-separated globs to include. |
 | `request-changes` | no | `true` | When `true`, fail the check on any finding. When `false`, comment only. |
 
