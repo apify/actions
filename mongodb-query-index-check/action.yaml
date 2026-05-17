@@ -74,9 +74,15 @@ runs:
           true|false) ;;
           *) echo "::error::Invalid request-changes '$REQUEST_CHANGES_INPUT' (must be the literal string 'true' or 'false')."; exit 1 ;;
         esac
-        # Seed the result file so Finalize (runs with `if: always()`) always sees a defined $RESULT_PATH.
-        echo "RESULT_PATH=${RUNNER_TEMP}/mongo-index-result.txt" >> "$GITHUB_ENV"
-        printf 'none' > "${RUNNER_TEMP}/mongo-index-result.txt"
+        # State files live inside the workspace (not RUNNER_TEMP). claude-code-action's Bash sandbox
+        # only permits reads/writes under $GITHUB_WORKSPACE — paths outside it cost Claude turns on
+        # retries with native Read/Write before it finds the workaround.
+        state_dir="${GITHUB_WORKSPACE}/__mongo_index_check"
+        mkdir -p "$state_dir"
+        echo "RESULT_PATH=${state_dir}/result.txt" >> "$GITHUB_ENV"
+        echo "CHANGED_FILES_PATH=${state_dir}/changed-files.json" >> "$GITHUB_ENV"
+        # Seed the result file so Finalize (runs with `if: always()`) always sees a defined value.
+        printf 'none' > "${state_dir}/result.txt"
 
     - name: Pre-check PR diff
       id: pre-check
@@ -84,7 +90,9 @@ runs:
       env:
         INPUT_PATHS: ${{ inputs.paths }}
         INPUT_PATHS_IGNORE: '**/node_modules/**,**/dist/**,**/build/**,**/test/**,**/__tests__/**,**/*.test.*,**/*.spec.*,**/mongo-indexes/**'
-        OUTPUT_CHANGED_FILES_PATH: ${{ runner.temp }}/mongo-index-changed-files.json
+        # CHANGED_FILES_PATH was seeded into $GITHUB_ENV by the Validate step. Pass it under the name
+        # preCheck() reads (OUTPUT_CHANGED_FILES_PATH) so we don't need to mutate process.env in the script.
+        OUTPUT_CHANGED_FILES_PATH: ${{ env.CHANGED_FILES_PATH }}
       with:
         github-token: ${{ inputs.github-token }}
         script: |
@@ -134,7 +142,6 @@ runs:
         REPO: ${{ github.repository }}
         BASE_SHA: ${{ github.event.pull_request.base.sha }}
         HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        CHANGED_FILES_PATH: ${{ runner.temp }}/mongo-index-changed-files.json
         REQUEST_CHANGES_MODE: ${{ inputs.request-changes }}
       run: |
         set -euo pipefail
@@ -164,7 +171,7 @@ runs:
         claude_args: >-
           --max-turns ${{ inputs.max-turns }}
           --model claude-opus-4-7
-          --allowedTools "mcp__github__pull_request_read,mcp__github__pull_request_review_write,mcp__github__create_pending_pull_request_review,mcp__github__submit_pending_pull_request_review,mcp__github__add_comment_to_pending_review,mcp__github_inline_comment__create_inline_comment,Read,Write,Grep,Glob,TodoWrite,Task,Bash(ls:*),Bash(cat:*),Bash(grep:*),Bash(rg:*),Bash(find:*),Bash(test:*),Bash(echo:*),Bash(printf:*),Bash(head:*),Bash(tail:*),Bash(jq:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr review:*),Bash(gh api:*)"
+          --allowedTools "mcp__github__pull_request_read,mcp__github__pull_request_review_write,mcp__github__create_pending_pull_request_review,mcp__github__submit_pending_pull_request_review,mcp__github__add_comment_to_pending_review,mcp__github_inline_comment__create_inline_comment,Read,Write,Grep,Glob,TodoWrite,Task,Bash(ls:*),Bash(cat:*),Bash(grep:*),Bash(rg:*),Bash(find:*),Bash(test:*),Bash(echo:*),Bash(printf:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(awk:*),Bash(sed:*),Bash(sort:*),Bash(jq:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr review:*),Bash(gh api:*)"
 
     - name: Finalize review result
       id: finalize
