@@ -39,6 +39,26 @@ For each such call, work out:
 
 Then **cross-reference against the indexes** for that collection by reading the matching file in `$MONGO_INDEXES_DIR`.
 
+## Common change patterns to flag
+
+Reconstruct the before- and after-state of each MongoDB call and compare both against the indexes. Most missed regressions match one of these:
+
+1. **Partial-filter qualifier dropped or rewritten.** If a candidate index has `partialFilterExpression: { removedAt: null }`, the after-query must include every key. Removing or rewriting it (e.g. `removedAt: null` → `disabledAt: { $ne: null }`) makes the index unusable.
+2. **New `sort` outside the chosen index's ESR position.** Sort field must follow all equality fields in the index, else in-memory sort.
+3. **Shard-key prefix dropped.** Sharded collections in `$MONGO_INDEXES_DIR` are marked with `// For sharding ...` next to a unique index whose first field is the shard key (often `userId`). Dropping it fans out to every shard.
+4. **New or modified `$or` branch.** Each branch is matched independently. Flag any branch without an index.
+5. **Equality → negation** (`$ne`, `$nin`, `$not`, `$exists: false`). Forces a scan even on indexed fields.
+6. **Unanchored `$regex` on an indexed field.** Only `/^prefix/` uses the index.
+7. **Range filter before equality in a compound query.** ESR order: equality, sort, range. Reversing neutralises the index.
+
+## Concrete examples
+
+- **OK ✅** — `Act2Runs.find({ userId, status, removedAt: null }).sort({ startedAt: -1 })` against index `{ userId: 1, status: 1, startedAt: -1 }` with `partialFilterExpression: { removedAt: null }`. Prefix matches, sort follows equality, partial filter matches.
+- **🟠 high** — same query without `removedAt: null`. Partial-filter index no longer applies. Name the dropped key in the comment.
+- **🟠 high** — `.sort({ 'profile.name': 1 })` added to a query whose chosen index is `{ userId: 1, finishedAt: 1 }`. In-memory sort.
+- **🟠 high** — `Act2Runs.find({ status })` on a collection sharded by `userId`. Fans out to every shard.
+- **🟡 medium** — `$or` with one indexed branch and one unindexed branch — flag the unindexed branch.
+
 ## Severity classification
 
 Apply this ESR-aware (Equality → Sort → Range) rubric. Pick the highest applicable severity per finding:
@@ -71,11 +91,18 @@ Follow these steps in order:
 
 ### 2. Decide findings
 
-- Apply the severity rubric above. Be precise — quote the exact filter shape and the exact existing index in your reasoning. Don't speculate about indexes that aren't in `$MONGO_INDEXES_DIR`.
-- If a query looks unindexed but the collection file doesn't exist in `$MONGO_INDEXES_DIR`, **don't flag it** — it's probably a collection that isn't managed by this package (e.g. a temporary collection, a sharded write log, a third-party collection). Skip silently.
-- If a `partialFilterExpression` does match the query's `where`, treat that as the index being usable.
-- If you can't determine the collection reliably from the code, skip the finding rather than guessing.
-- If you find no issues, write `none` to `$RESULT_PATH` and **exit silently** — do not open a review.
+For each MongoDB call you identified:
+
+1. **Reconstruct the before- and after-state of the query** (filter, sort, projection). Check **both** against the indexes — a partial-filter regression can only be seen this way.
+2. **Read every index for the collection** from `$MONGO_INDEXES_DIR/<collection>.ts`. Score each against the after-query for (a) ESR prefix match, (b) `partialFilterExpression` match, (c) sort/range field position.
+3. **Walk through "Common change patterns to flag" above.** The patterns are the checklist; the rubric is the severity.
+4. **Pick the best index, grade the gap.** No usable index → 🔴 critical. Index exists but query doesn't fit (prefix / partial filter / sort) → 🟠 high. Usable but inefficient → 🟡 medium.
+
+Guardrails:
+
+- Quote the **exact** filter and the **exact** index (by `name:` if set, else key spec).
+- Skip silently if the collection file doesn't exist in `$MONGO_INDEXES_DIR`, or you can't determine the collection reliably.
+- No findings → write `none` to `$RESULT_PATH` and exit silently.
 
 ### 3. Post the review (only when there is at least one finding)
 
