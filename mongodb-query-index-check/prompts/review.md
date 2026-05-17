@@ -133,7 +133,17 @@ When submitting, include a brief summary body — at most 4 short bullets coveri
 
 ### 4. Persist the result
 
-After submitting the review (or after deciding no review is needed), write the maximum severity to `$RESULT_PATH` as a single lowercase word with **no whitespace and no newline**. Examples: `none`, `low`, `medium`, `high`, `critical`. Use either `Write` or `printf "%s" <word> > $RESULT_PATH`.
+After submitting the review (or after deciding no review is needed), write the maximum severity to `$RESULT_PATH` as a single lowercase word with **no whitespace and no newline**. Examples: `none`, `low`, `medium`, `high`, `critical`. **Use the `Write` tool** — bash output redirection (`>`, `>>`) is blocked by the sandbox even for paths inside the workspace, so `printf > $RESULT_PATH` will fail.
+
+## Bash sandbox notes
+
+The bash sandbox imposes a few constraints worth knowing up-front so you don't waste turns on retries:
+
+- **Output redirection (`>`, `>>`, `tee` to a file) is blocked**, even for paths inside the workspace. Use the `Write` tool when you need to create a file. Pipes (`|`) between allowed commands are fine.
+- **Chained commands (`&&`, `;`) are rejected** as "multiple operations". Issue one command per `Bash` call.
+- **Paths outside `$GITHUB_WORKSPACE` are blocked** for bash read/write. The state paths you've been given (`$CHANGED_FILES_PATH`, `$RESULT_PATH`, `$MONGO_INDEXES_DIR`) all live inside the workspace, so use them as-is. The `Read` and `Write` tools work for any path.
+
+Prefer the native `Read`, `Write`, `Grep`, `Glob` tools over bash equivalents wherever you can — they're free of these constraints.
 
 ## Hard constraints
 
