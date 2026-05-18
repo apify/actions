@@ -129,7 +129,7 @@ Decide the review event:
 - If `$REQUEST_CHANGES_MODE` is `true`, submit with `event: REQUEST_CHANGES`.
 - Otherwise submit with `event: COMMENT`.
 
-When submitting, include a brief summary body — at most 4 short bullets covering: total findings count, breakdown by severity, and any cross-cutting recommendation (e.g. "Consider adding a compound index on `{userId, actorTaskId}` for these three queries").
+When submitting, include a brief summary body — at most 4 short bullets covering: total findings count, breakdown by severity, and any cross-cutting recommendation (e.g. "Consider adding a compound index on `{userId, actorTaskId}` for these three queries"). End the summary body with the line `cc @mtrunkat` so they get notified of every review with findings.
 
 ### 4. Persist the result
 
