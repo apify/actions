@@ -1,8 +1,9 @@
 import type * as Core from '@actions/core';
-import { type Octokit } from '@octokit/rest';
-import { type context as Context } from '@actions/github';
+import { type context as Context, type getOctokit } from '@actions/github';
 
 import * as PackageJSON from '../package.json' with { type: 'json' };
+
+type Octokit = ReturnType<typeof getOctokit>;
 
 type CheckRun = {
     id: number;

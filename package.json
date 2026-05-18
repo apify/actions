@@ -13,7 +13,6 @@
         "@actions/core": "^3.0.1",
         "@actions/github": "^9.1.1",
         "@apify/oxlint-config": "0.2.10",
-        "@octokit/rest": "^22.0.1",
         "@types/node": "^25.7.0",
         "oxlint": "1.64.0",
         "oxlint-tsgolint": "0.22.1",

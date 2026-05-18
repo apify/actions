@@ -2,8 +2,10 @@ import * as util from 'node:util';
 import * as childProcess from 'node:child_process';
 import * as fs from 'node:fs/promises';
 
-import type { Octokit } from '@octokit/rest';
 import type * as Core from '@actions/core';
+import { type getOctokit } from '@actions/github';
+
+type Octokit = ReturnType<typeof getOctokit>;
 
 const exec = util.promisify(childProcess.exec);
 
