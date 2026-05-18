@@ -50,6 +50,8 @@ Reconstruct the before- and after-state of each MongoDB call and compare both ag
 5. **Equality → negation** (`$ne`, `$nin`, `$not`, `$exists: false`). Forces a scan even on indexed fields.
 6. **Unanchored `$regex` on an indexed field.** Only `/^prefix/` uses the index.
 7. **Range filter before equality in a compound query.** ESR order: equality, sort, range. Reversing neutralises the index.
+8. **`.skip(N)` / `$skip: N` on a sharded collection without `readConcern: 'available'`.** Sharded reads run a `SHARDING_FILTER` stage that fetches every skipped document and checks it against the shard's chunk ranges to filter orphans. For large skips this dominates the query (a 100k skip on `Act2Runs` was measured at ~60s in production). Fix: pass `readConcern: 'available'` in the call options (or refactor to cursor pagination with `$gt: lastId`). Applies to `find().skip()`, `find(..., { skip: N })`, and `aggregate([{ $skip: N }, …])`. **Do not flag `countDocuments`** — it's auto-handled by `ShardAwareCollection`.
+9. **Query on a heavy-index collection without `hint`.** If the collection file in `$MONGO_INDEXES_DIR` has many `ensureIndex` calls (e.g. `actor_jobs.ts` for `Act2Runs` has 40+), the planner can spend tens of seconds evaluating candidate plans on cold caches. Recommend `hint: '<index name>'` to pin plan selection. The chosen index needs `name:` set; if it doesn't, recommend adding one first. 🟡 medium.
 
 ## Concrete examples
 
@@ -57,6 +59,7 @@ Reconstruct the before- and after-state of each MongoDB call and compare both ag
 - **🟠 high** — same query without `removedAt: null`. Partial-filter index no longer applies. Name the dropped key in the comment.
 - **🟠 high** — `.sort({ 'profile.name': 1 })` added to a query whose chosen index is `{ userId: 1, finishedAt: 1 }`. In-memory sort.
 - **🟠 high** — `Act2Runs.find({ status })` on a collection sharded by `userId`. Fans out to every shard.
+- **🟠 high** — `Act2Runs.find({ userId, actId, removedAt: null }, { sort: { startedAt: -1 }, limit: 100, skip: 100_000 })` on a sharded collection without `readConcern: 'available'`. The `SHARDING_FILTER` stage fetches and orphan-checks the 100k skipped docs (~60s observed). Pass `readConcern: 'available'`, or refactor to cursor pagination using `startedAt < lastStartedAt`.
 - **🟡 medium** — `$or` with one indexed branch and one unindexed branch — flag the unindexed branch.
 
 ## Severity classification
@@ -69,11 +72,13 @@ Apply this ESR-aware (Equality → Sort → Range) rubric. Pick the highest appl
   - **Partial filter expression** of the matching index is incompatible with the query (e.g. index has `partialFilterExpression: { removedAt: null }` but the query also wants `removedAt: { $exists: true }`).
   - **Sort can't use the index** (sort field absent from the index, or appears before equality fields).
   - Query uses **`$regex` without an anchor** (`/^…/`) on an indexed field — the regex still won't use the index without an anchor.
+  - **`.skip(N)` / `$skip` on a sharded collection without `readConcern: 'available'`** — `SHARDING_FILTER` orphan-check dominates query time for large skips.
 - 🟡 **medium** — An index exists and is used, but is **likely inefficient**:
   - Filter is on a **low-selectivity** field only (e.g. only on a boolean or status enum that covers most documents) and there's no further filter to narrow it.
   - **Read/return ratio likely poor**: index scans many docs the query then discards (e.g. range-then-equality compound order, or `$ne` / `$nin` on an indexed field).
   - Sort uses the index but the direction doesn't match (compound index would need a reverse scan).
   - Multiple `$or` branches and at least one has no usable index.
+  - Query on a collection with **many overlapping indexes** lacks `hint:` — planner spends tens of seconds choosing a plan.
 - 🟢 **low** — Stylistic / advisory:
   - Could tighten an existing `partialFilterExpression` to reduce index size.
   - Project to fewer fields to make this a covered query.
