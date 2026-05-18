@@ -1,13 +1,5 @@
 #!/usr/bin/env -S uv run --script
 
-# /// script
-# requires-python = ">=3.14"
-# dependencies = [
-#   "rich~=14.0",
-#   "typer~=0.19.0",
-# ]
-# ///
-
 """Verify that built artifacts (sdist + wheel) in `dist/` install and import correctly.
 
 Designed to run against any Python package built via `uv build` / hatch / similar.
@@ -106,7 +98,6 @@ def collect_repo_files(src_package_dir: Path) -> tuple[list[str], list[str]]:
     """Return (source_files, data_files) relative to the parent of `src_package_dir`.
 
     The relative-to-parent layout matches both sdist (`src/<pkg>/...`) and wheel (`<pkg>/...`).
-    Data files are any non-`.py` file that isn't a compiled artifact or cache.
     """
     if not src_package_dir.is_dir():
         raise SystemExit(f'Source package directory not found: {src_package_dir}')
@@ -281,35 +272,28 @@ def main(
         check_wheel_contents(wheel_members, source_files, data_files),
     ]
 
+    artifacts: tuple[tuple[Path, Literal['wheel', 'sdist']], ...] = ((wheel, 'wheel'), (sdist, 'sdist'))
     with tempfile.TemporaryDirectory(prefix='verify-built-package-') as tmp:
         tmp_path = Path(tmp)
-        results.append(
-            install_and_smoke_test(
-                wheel,
-                'wheel',
-                tmp_path / 'venv-wheel',
-                package,
-                python_version,
-                extras,
-                smoke_code,
+        for artifact, kind in artifacts:
+            results.append(
+                install_and_smoke_test(
+                    artifact,
+                    kind,
+                    tmp_path / f'venv-{kind}',
+                    package,
+                    python_version,
+                    extras,
+                    smoke_code,
+                )
             )
-        )
-        results.append(
-            install_and_smoke_test(
-                sdist,
-                'sdist',
-                tmp_path / 'venv-sdist',
-                package,
-                python_version,
-                extras,
-                smoke_code,
-            )
-        )
 
     section('Summary')
+
     if all(results):
         passed('all checks passed')
         return
+
     failed(f'{sum(1 for r in results if not r)} of {len(results)} check group(s) failed')
     raise typer.Exit(code=1)
 

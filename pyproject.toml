@@ -6,10 +6,10 @@ requires-python = ">=3.14"
 
 [dependency-groups]
 dev = [
-    "rich~=14.0",
+    "rich~=15.0.0",
     "ruff~=0.15.0",
     "ty~=0.0.0",
-    "typer~=0.19.0",
+    "typer~=0.25.0",
 ]
 
 [tool.uv]
@@ -52,4 +52,4 @@ inline-quotes = "single"
 python-version = "3.14"
 
 [tool.ty.src]
-include = ["python-package-check", "git-cliff-release"]
+include = ["**/*.py"]
