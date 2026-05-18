@@ -1,5 +1,5 @@
 import type * as Core from '@actions/core';
-import { type context as Context, type getOctokit } from '@actions/github';
+import type { context as Context, getOctokit } from '@actions/github';
 
 import * as PackageJSON from '../package.json' with { type: 'json' };
 
