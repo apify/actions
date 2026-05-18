@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.2](https://github.com/apify/actions/compare/v1.1.1...v1.1.2) (2026-05-18)
+
+
+### Bug Fixes
+
+* Correctly pass inputs to `github-script` actions ([#15](https://github.com/apify/actions/issues/15)) ([345a1cd](https://github.com/apify/actions/commit/345a1cd7be9530977aaf169323f7a612eddee1df))
+
 ## [1.1.1](https://github.com/apify/actions/compare/v1.1.0...v1.1.1) (2026-05-18)
 
 
