@@ -1,4 +1,12 @@
-#!/usr/bin/env python
+#!/usr/bin/env -S uv run --script
+
+# /// script
+# requires-python = ">=3.14"
+# dependencies = [
+#   "rich~=14.0",
+#   "typer~=0.19.0",
+# ]
+# ///
 
 """Verify that built artifacts (sdist + wheel) in `dist/` install and import correctly.
 
@@ -17,14 +25,17 @@ Checks performed:
 
 from __future__ import annotations
 
-import argparse
 import subprocess
-import sys
 import tarfile
 import tempfile
 import zipfile
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
+
+import typer
+from rich.console import Console
+
+console = Console()
 
 REQUIRED_METADATA_FILES = (
     'LICENSE',
@@ -46,19 +57,19 @@ FORBIDDEN_SDIST_FILES = ('uv.lock',)
 
 
 def passed(msg: str) -> None:
-    print(f'PASS  {msg}', flush=True)
+    console.print(f'[green]PASS[/green]  {msg}')
 
 
 def failed(msg: str) -> None:
-    print(f'FAIL  {msg}', flush=True)
+    console.print(f'[red]FAIL[/red]  {msg}')
 
 
 def info(msg: str) -> None:
-    print(f'      {msg}', flush=True)
+    console.print(f'[dim]      {msg}[/dim]')
 
 
 def section(title: str) -> None:
-    print(f'\n=== {title} ===')
+    console.print(f'\n[bold]=== {title} ===[/bold]')
 
 
 def find_artifacts(dist_dir: Path) -> tuple[Path, Path]:
@@ -219,41 +230,38 @@ def install_and_smoke_test(
     return True
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--package', required=True, help='Importable Python package name (e.g. crawlee).')
-    parser.add_argument('--dist-dir', type=Path, default=Path('dist'), help='Directory containing built artifacts.')
-    parser.add_argument(
-        '--src-package-dir',
-        default='',
-        help='Path to the package source directory. Default: src/<package>.',
-    )
-    parser.add_argument('--extras', default='', help='Optional install extras (e.g. all).')
-    parser.add_argument('--python-version', default='3.14', help='Python version for verification venvs.')
-    parser.add_argument(
-        '--smoke-code',
-        default='',
-        help='Optional extra Python code to run after `import <package>` in the smoke test.',
-    )
-    args = parser.parse_args(argv)
+def main(
+    package: Annotated[str, typer.Option(help='Importable Python package name (e.g. crawlee).')],
+    python_version: Annotated[str, typer.Option(help='Python version for verification venvs.')],
+    dist_dir: Annotated[Path, typer.Option(help='Directory containing built artifacts.')] = Path('dist'),
+    src_package_dir: Annotated[
+        str,
+        typer.Option(help='Path to the package source directory. Default: src/<package>.'),
+    ] = '',
+    extras: Annotated[str, typer.Option(help='Optional install extras (e.g. all).')] = '',
+    smoke_code: Annotated[
+        str,
+        typer.Option(help='Optional extra Python code to run after `import <package>` in the smoke test.'),
+    ] = '',
+) -> None:
+    src_path = (Path(src_package_dir) if src_package_dir else Path('src') / package).resolve()
 
-    src_package_dir = (Path(args.src_package_dir) if args.src_package_dir else Path('src') / args.package).resolve()
-
-    wheel, sdist = find_artifacts(args.dist_dir.resolve())
-    info(f'package:  {args.package}')
-    info(f'src dir:  {src_package_dir}')
+    wheel, sdist = find_artifacts(dist_dir.resolve())
+    info(f'package:  {package}')
+    info(f'src dir:  {src_path}')
     info(f'wheel:    {wheel.name}')
     info(f'sdist:    {sdist.name}')
 
     sdist_members = list_sdist_members(sdist)
     wheel_members = list_wheel_members(wheel)
-    source_files, data_files = collect_repo_files(src_package_dir)
+    source_files, data_files = collect_repo_files(src_path)
     info(f'sources:  {len(source_files)}')
     info(f'data:     {len(data_files)}')
 
-    results: list[bool] = []
-    results.append(check_sdist_contents(sdist_members, source_files, data_files))
-    results.append(check_wheel_contents(wheel_members, source_files, data_files))
+    results: list[bool] = [
+        check_sdist_contents(sdist_members, source_files, data_files),
+        check_wheel_contents(wheel_members, source_files, data_files),
+    ]
 
     with tempfile.TemporaryDirectory(prefix='verify-built-package-') as tmp:
         tmp_path = Path(tmp)
@@ -262,10 +270,10 @@ def main(argv: list[str] | None = None) -> int:
                 wheel,
                 'wheel',
                 tmp_path / 'venv-wheel',
-                args.package,
-                args.python_version,
-                args.extras,
-                args.smoke_code,
+                package,
+                python_version,
+                extras,
+                smoke_code,
             )
         )
         results.append(
@@ -273,20 +281,20 @@ def main(argv: list[str] | None = None) -> int:
                 sdist,
                 'sdist',
                 tmp_path / 'venv-sdist',
-                args.package,
-                args.python_version,
-                args.extras,
-                args.smoke_code,
+                package,
+                python_version,
+                extras,
+                smoke_code,
             )
         )
 
     section('Summary')
     if all(results):
         passed('all checks passed')
-        return 0
+        return
     failed(f'{sum(1 for r in results if not r)} of {len(results)} check group(s) failed')
-    return 1
+    raise typer.Exit(code=1)
 
 
 if __name__ == '__main__':
-    sys.exit(main())
+    typer.run(main)

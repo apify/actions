@@ -7,15 +7,17 @@ inputs:
   package_name:
     description: Importable Python package name (e.g. `crawlee`, `apify`, `apify_client`).
     required: true
-  src_package_dir:
-    description: Path to the package source directory, relative to the repository root.
-    required: true
-  dist_dir:
-    description: Directory containing the built sdist + wheel.
-    required: true
   python_version:
     description: Python version to use for the verification venvs.
     required: true
+  src_package_dir:
+    description: Path to the package source directory, relative to the repository root. Defaults to `src/<package_name>`.
+    required: false
+    default: ""
+  dist_dir:
+    description: Directory containing the built sdist + wheel.
+    required: false
+    default: "dist"
   extras:
     description: Optional extras to install (e.g. `all`). Empty for no extras.
     required: false
@@ -45,7 +47,7 @@ runs:
         SRC_PACKAGE_DIR: ${{ inputs.src_package_dir }}
         SMOKE_CODE: ${{ inputs.smoke_code }}
       run: |
-        uv run --no-project python "${{ github.action_path }}/verify_built_package.py" \
+        uv run --no-project --script "${{ github.action_path }}/verify_built_package.py" \
           --package "$PACKAGE_NAME" \
           --dist-dir "$DIST_DIR" \
           --python-version "$PYTHON_VERSION" \
