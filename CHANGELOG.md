@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.1](https://github.com/apify/actions/compare/v1.1.0...v1.1.1) (2026-05-18)
+
+
+### Bug Fixes
+
+* Fix type imports in actions using `github-script` ([#13](https://github.com/apify/actions/issues/13)) ([7000329](https://github.com/apify/actions/commit/7000329e667503c515621568ab031b2c21c28ff1))
+
 ## [1.1.0](https://github.com/apify/actions/compare/v1.0.0...v1.1.0) (2026-05-18)
 
 
