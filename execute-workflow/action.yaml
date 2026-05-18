@@ -18,6 +18,9 @@ runs:
   steps:
     - name: Execute workflow
       uses: actions/github-script@v8
+      env:
+        WORKFLOW: ${{ inputs.workflow }}
+        INPUTS: ${{ inputs.inputs }}
       with:
         github-token: ${{ inputs.token }}
         script: |
@@ -27,4 +30,5 @@ runs:
               github,
               context,
               core,
+              env: process.env,
           });

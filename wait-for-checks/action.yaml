@@ -43,6 +43,15 @@ runs:
   steps:
     - name: Wait for checks
       uses: actions/github-script@v8
+      env:
+        CHECK_NAME: ${{ inputs.check-name }}
+        CHECK_REGEXP: ${{ inputs.check-regexp }}
+        REF: ${{ inputs.ref }}
+        WAIT_INTERVAL: ${{ inputs.wait-interval }}
+        RUNNING_WORKFLOW_NAME: ${{ inputs.running-workflow-name }}
+        ALLOWED_CONCLUSIONS: ${{ inputs.allowed-conclusions }}
+        IGNORE_CHECKS: ${{ inputs.ignore-checks }}
+        VERBOSE: ${{ inputs.verbose }}
       with:
         github-token: ${{ inputs.token }}
         script: |
@@ -52,4 +61,5 @@ runs:
               github,
               context,
               core,
+              env: process.env,
           });
