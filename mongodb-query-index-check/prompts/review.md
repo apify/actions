@@ -106,17 +106,16 @@ Guardrails:
 
 ### 3. Deduplicate against previous runs
 
-The workflow can be re-triggered on the same PR (rebases, base-branch retargets, manual re-runs), and a previous run may have already posted some or all of these findings. Re-posting clutters the review. Before posting, filter out duplicates:
+A previous run on this PR may have already posted some of these findings. Filter duplicates before posting:
 
-1. Fetch existing review comments with `mcp__github__pull_request_read` using `method: get_review_comments` and `pullNumber: $PR_NUMBER`. The response is a list of review threads; each thread has `is_outdated` and a `comments` array (each comment has `author`, `body`, `path`, `line`).
-2. From that list, collect every comment whose `author` is `github-actions` AND whose `body` starts with one of `🔴 **MongoDB index check`, `🟠 **MongoDB index check`, `🟡 **MongoDB index check`, `🟢 **MongoDB index check`, AND whose containing thread is **not** `is_outdated`. These are previously-posted findings still anchored to live diff lines.
-3. For each finding you decided in step 2, drop it if a previously-posted comment exists on the same `(path, line)`. Outdated comments don't count — line numbers shift across commits, so a fresh finding on a shifted line is a new finding.
-4. Then fetch existing reviews with `method: get_reviews` and check for a `github-actions` review whose `commit_id == $HEAD_SHA` and whose body starts with `MongoDB index check`. If one exists, the workflow has already posted a summary for this exact commit — do not submit a new review at all, even if new findings remain. Compute the max severity from the un-filtered set, write it to `$RESULT_PATH` in step 5, and exit silently.
-5. If, after step 3, no new findings remain, do the same: compute max severity from the un-filtered set, write it in step 5, and exit silently without posting.
+1. Call `mcp__github__pull_request_read` with `method: get_review_comments` and `pullNumber: $PR_NUMBER`. The response is a list of review threads; each has `is_outdated` and a `comments` array (every comment has `author`, `body`, `path`, `line`).
+2. Collect comments whose `author` is `github-actions`, whose containing thread is not `is_outdated`, and whose `body` starts with the template prefix defined in step 4 (any of the four severity emojis followed by ` **MongoDB index check`).
+3. Drop any finding whose `(path, line)` matches a collected comment. Outdated threads don't count — line numbers shift across commits, so a fresh finding on a shifted line is a new finding.
+4. If no new findings remain, compute the max severity from the original (un-filtered) findings list, write it to `$RESULT_PATH`, and exit silently. Do not submit an empty review.
 
-If either `get_review_comments` or `get_reviews` returns an error, proceed without dedup — a duplicate review is better than no review.
+If `get_review_comments` errors, proceed without dedup — a duplicate review is better than no review.
 
-### 4. Post the review (only when there is at least one *new* finding)
+### 4. Post the review (only when at least one new finding remains)
 
 Use whichever GitHub MCP review tools are available. Common shapes:
 
@@ -145,7 +144,7 @@ When submitting, include a brief summary body — at most 4 short bullets coveri
 
 ### 5. Persist the result
 
-After submitting the review (or after deciding no review is needed — including the dedup early-exits in step 3), write the maximum severity to `$RESULT_PATH` as a single lowercase word with **no whitespace and no newline**. Examples: `none`, `low`, `medium`, `high`, `critical`. The severity must reflect **all findings you identified in step 2**, including ones you dropped as duplicates — the check should still fail (or report `high`) on a known issue, otherwise re-running the workflow would silently green the check. **Use the `Write` tool** — bash output redirection (`>`, `>>`) is blocked by the sandbox even for paths inside the workspace, so `printf > $RESULT_PATH` will fail.
+After submitting the review (or after skipping submission per step 3), write the maximum severity to `$RESULT_PATH` as a single lowercase word with **no whitespace and no newline**. Examples: `none`, `low`, `medium`, `high`, `critical`. The severity must reflect **all findings you identified in step 2**, including ones dropped as duplicates — re-running the workflow must never silently green a previously-failing check. **Use the `Write` tool** — bash output redirection (`>`, `>>`) is blocked by the sandbox even for paths inside the workspace, so `printf > $RESULT_PATH` will fail.
 
 ## Bash sandbox notes
 
