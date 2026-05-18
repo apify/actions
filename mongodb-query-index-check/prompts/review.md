@@ -106,15 +106,15 @@ Guardrails:
 
 ### 3. Post the review (only when there is at least one finding)
 
-Use whichever GitHub MCP review tools are available. Common shapes:
+Use the **pending-review flow** only — do not also call `mcp__github_inline_comment__create_inline_comment`, that produces duplicate comments. The flow:
 
-- `mcp__github__pull_request_review_write` with `action: create_pending` (or `mcp__github__create_pending_pull_request_review`) to open a pending review on `$PR_NUMBER`. If you get "can only have one pending review per pull request", continue to the next step.
-- `mcp__github__add_comment_to_pending_review` to add one inline comment per finding.
-- `mcp__github__pull_request_review_write` with `action: submit_pending` (or `mcp__github__submit_pending_pull_request_review`) to submit the review.
+1. `mcp__github__pull_request_review_write` with `action: create_pending` (or `mcp__github__create_pending_pull_request_review`) to open a pending review on `$PR_NUMBER`. If you get "can only have one pending review per pull request", continue to the next step.
+2. `mcp__github__add_comment_to_pending_review` to add **one** inline comment per finding.
+3. `mcp__github__pull_request_review_write` with `action: submit_pending` (or `mcp__github__submit_pending_pull_request_review`) to submit the review.
 
 If none of the MCP tools are wired up, fall back to `gh pr review $PR_NUMBER --repo $REPO --comment|--request-changes -F <file>` plus inline comments via `gh api` — but try the MCP tools first.
 
-For each finding, point `path` and `line` at the **after-state RIGHT line** of the diff that contains the offending query. Use this exact comment body:
+For each finding, point `path` and `line` at the **after-state RIGHT line** of the diff that contains the offending query. Use this exact comment body, **including the trailing HTML marker**:
 
     {{SEVERITY_EMOJI}} **MongoDB index check — {{SEVERITY_WORD}}**
 
@@ -122,14 +122,16 @@ For each finding, point `path` and `line` at the **after-state RIGHT line** of t
 
     **Suggested action**: {{Either point to an existing index that should be used and what to adjust in the query, or recommend adding a new index in `src/packages/mongo-indexes/src/<file>.ts`. Be specific about which fields and partial-filter expressions.}}
 
-Where `{{SEVERITY_EMOJI}}` / `{{SEVERITY_WORD}}` is one of `🔴 critical`, `🟠 high`, `🟡 medium`, `🟢 low`.
+    <!-- mongo-index-check -->
+
+Where `{{SEVERITY_EMOJI}}` / `{{SEVERITY_WORD}}` is one of `🔴 critical`, `🟠 high`, `🟡 medium`, `🟢 low`. The trailing `<!-- mongo-index-check -->` marker is required on every comment so the action's cleanup step (which runs before this one) can identify and delete stale duplicates from prior runs.
 
 Decide the review event:
 
 - If `$REQUEST_CHANGES_MODE` is `true`, submit with `event: REQUEST_CHANGES`.
 - Otherwise submit with `event: COMMENT`.
 
-When submitting, include a brief summary body — at most 4 short bullets covering: total findings count, breakdown by severity, and any cross-cutting recommendation (e.g. "Consider adding a compound index on `{userId, actorTaskId}` for these three queries"). End the summary body with the line `cc @mtrunkat` so they get notified of every review with findings.
+When submitting, include a brief summary body — at most 4 short bullets covering: total findings count, breakdown by severity, and any cross-cutting recommendation (e.g. "Consider adding a compound index on `{userId, actorTaskId}` for these three queries"). End the summary body with the line `cc @mtrunkat` so they get notified of every review with findings, followed by the same `<!-- mongo-index-check -->` marker on its own line.
 
 ### 4. Persist the result
 
