@@ -104,7 +104,19 @@ Guardrails:
 - Skip silently if the collection file doesn't exist in `$MONGO_INDEXES_DIR`, or you can't determine the collection reliably.
 - No findings → write `none` to `$RESULT_PATH` and exit silently.
 
-### 3. Post the review (only when there is at least one finding)
+### 3. Deduplicate against previous runs
+
+The workflow can be re-triggered on the same PR (rebases, base-branch retargets, manual re-runs), and a previous run may have already posted some or all of these findings. Re-posting clutters the review. Before posting, filter out duplicates:
+
+1. Fetch existing review comments with `mcp__github__pull_request_read` using `method: get_review_comments` and `pullNumber: $PR_NUMBER`. The response is a list of review threads; each thread has `is_outdated` and a `comments` array (each comment has `author`, `body`, `path`, `line`).
+2. From that list, collect every comment whose `author` is `github-actions` AND whose `body` starts with one of `🔴 **MongoDB index check`, `🟠 **MongoDB index check`, `🟡 **MongoDB index check`, `🟢 **MongoDB index check`, AND whose containing thread is **not** `is_outdated`. These are previously-posted findings still anchored to live diff lines.
+3. For each finding you decided in step 2, drop it if a previously-posted comment exists on the same `(path, line)`. Outdated comments don't count — line numbers shift across commits, so a fresh finding on a shifted line is a new finding.
+4. Then fetch existing reviews with `method: get_reviews` and check for a `github-actions` review whose `commit_id == $HEAD_SHA` and whose body starts with `MongoDB index check`. If one exists, the workflow has already posted a summary for this exact commit — do not submit a new review at all, even if new findings remain. Compute the max severity from the un-filtered set, write it to `$RESULT_PATH` in step 5, and exit silently.
+5. If, after step 3, no new findings remain, do the same: compute max severity from the un-filtered set, write it in step 5, and exit silently without posting.
+
+If either `get_review_comments` or `get_reviews` returns an error, proceed without dedup — a duplicate review is better than no review.
+
+### 4. Post the review (only when there is at least one *new* finding)
 
 Use whichever GitHub MCP review tools are available. Common shapes:
 
@@ -131,9 +143,9 @@ Decide the review event:
 
 When submitting, include a brief summary body — at most 4 short bullets covering: total findings count, breakdown by severity, and any cross-cutting recommendation (e.g. "Consider adding a compound index on `{userId, actorTaskId}` for these three queries"). End the summary body with the line `cc @mtrunkat` so they get notified of every review with findings.
 
-### 4. Persist the result
+### 5. Persist the result
 
-After submitting the review (or after deciding no review is needed), write the maximum severity to `$RESULT_PATH` as a single lowercase word with **no whitespace and no newline**. Examples: `none`, `low`, `medium`, `high`, `critical`. **Use the `Write` tool** — bash output redirection (`>`, `>>`) is blocked by the sandbox even for paths inside the workspace, so `printf > $RESULT_PATH` will fail.
+After submitting the review (or after deciding no review is needed — including the dedup early-exits in step 3), write the maximum severity to `$RESULT_PATH` as a single lowercase word with **no whitespace and no newline**. Examples: `none`, `low`, `medium`, `high`, `critical`. The severity must reflect **all findings you identified in step 2**, including ones you dropped as duplicates — the check should still fail (or report `high`) on a known issue, otherwise re-running the workflow would silently green the check. **Use the `Write` tool** — bash output redirection (`>`, `>>`) is blocked by the sandbox even for paths inside the workspace, so `printf > $RESULT_PATH` will fail.
 
 ## Bash sandbox notes
 
