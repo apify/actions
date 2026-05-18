@@ -3,7 +3,7 @@ import * as childProcess from 'node:child_process';
 import * as fs from 'node:fs/promises';
 
 import type * as Core from '@actions/core';
-import { type getOctokit } from '@actions/github';
+import type { getOctokit } from '@actions/github';
 
 type Octokit = ReturnType<typeof getOctokit>;
 
