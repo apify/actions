@@ -1,5 +1,13 @@
 #!/usr/bin/env -S uv run --script
 
+# /// script
+# requires-python = ">=3.14"
+# dependencies = [
+#   "rich~=15.0.0",
+#   "typer~=0.25.0",
+# ]
+# ///
+
 """Verify that built artifacts (sdist + wheel) in `dist/` install and import correctly.
 
 Designed to run against any Python package built via `uv build` / hatch / similar.
