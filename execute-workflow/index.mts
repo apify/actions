@@ -18,12 +18,12 @@ type WorkflowRun = {
     html_url: string;
 };
 
-export async function main({ github, context, core }: { github: Octokit, context: typeof Context, core: typeof Core }) {
+export async function main({ github, context, core, env }: { github: Octokit, context: typeof Context, core: typeof Core, env: Record<string, string | undefined> }) {
     core.info(`🏃 Execute Workflow Action v${PackageJSON.version}`);
     try {
-        const workflowFileName = core.getInput('workflow');
+        const workflowFileName = env.WORKFLOW ?? '';
 
-        const inputsJson = core.getInput('inputs');
+        const inputsJson = env.INPUTS ?? '';
         const inputs = inputsJson ? JSON.parse(inputsJson) : {};
 
         const { owner, repo } = context.repo;

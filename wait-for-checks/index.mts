@@ -98,17 +98,17 @@ async function findCommitWithoutSkipCI(
     throw new Error(`Traversed ${MAX_PARENT_TRAVERSAL} commits without finding one without [skip ci]. Giving up.`);
 }
 
-export async function main({ github, context, core }: { github: Octokit; context: typeof Context; core: typeof Core }) {
+export async function main({ github, context, core, env }: { github: Octokit; context: typeof Context; core: typeof Core; env: Record<string, string | undefined> }) {
     core.info(`🔍 Wait for Checks Action v${PackageJSON.version}`);
     try {
-        const checkName = core.getInput('check-name');
-        const checkRegexp = core.getInput('check-regexp');
-        const ref = core.getInput('ref');
-        const waitInterval = parseInt(core.getInput('wait-interval'), 10);
-        const runningWorkflowName = core.getInput('running-workflow-name');
-        const allowedConclusionsInput = core.getInput('allowed-conclusions');
-        const ignoreChecksInput = core.getInput('ignore-checks');
-        const verbose = core.getInput('verbose') === 'true';
+        const checkName = env.CHECK_NAME ?? '';
+        const checkRegexp = env.CHECK_REGEXP ?? '';
+        const ref = env.REF ?? '';
+        const waitInterval = parseInt(env.WAIT_INTERVAL ?? '10', 10);
+        const runningWorkflowName = env.RUNNING_WORKFLOW_NAME ?? '';
+        const allowedConclusionsInput = env.ALLOWED_CONCLUSIONS ?? '';
+        const ignoreChecksInput = env.IGNORE_CHECKS ?? '';
+        const verbose = (env.VERBOSE ?? '') === 'true';
 
         const allowedConclusions = allowedConclusionsInput.split(',').map((c) => c.trim());
         const ignoreChecks = ignoreChecksInput
