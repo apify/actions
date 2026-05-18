@@ -29,6 +29,7 @@ import subprocess
 import tarfile
 import tempfile
 import zipfile
+from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -36,6 +37,12 @@ import typer
 from rich.console import Console
 
 console = Console()
+
+
+class PackageLayout(StrEnum):
+    SRC = 'src'
+    FLAT = 'flat'
+
 
 REQUIRED_METADATA_FILES = (
     'LICENSE',
@@ -138,7 +145,12 @@ def _check_files_present(
     return True
 
 
-def check_sdist_contents(members: list[str], source_files: list[str], data_files: list[str]) -> bool:
+def check_sdist_contents(
+    members: list[str],
+    source_files: list[str],
+    data_files: list[str],
+    sdist_prefix: str,
+) -> bool:
     section('Checking sdist contents')
     member_set = set(members)
     results: list[bool] = []
@@ -168,9 +180,9 @@ def check_sdist_contents(members: list[str], source_files: list[str], data_files
             passed(f'sdist has no {forbidden}')
             results.append(True)
 
-    results.append(_check_files_present(member_set, source_files, 'src/', 'sdist', '.py source'))
+    results.append(_check_files_present(member_set, source_files, sdist_prefix, 'sdist', '.py source'))
     if data_files:
-        results.append(_check_files_present(member_set, data_files, 'src/', 'sdist', 'data'))
+        results.append(_check_files_present(member_set, data_files, sdist_prefix, 'sdist', 'data'))
     return all(results)
 
 
@@ -234,20 +246,26 @@ def main(
     package: Annotated[str, typer.Option(help='Importable Python package name (e.g. crawlee).')],
     python_version: Annotated[str, typer.Option(help='Python version for verification venvs.')],
     dist_dir: Annotated[Path, typer.Option(help='Directory containing built artifacts.')] = Path('dist'),
-    src_package_dir: Annotated[
-        str,
-        typer.Option(help='Path to the package source directory. Default: src/<package>.'),
-    ] = '',
+    package_layout: Annotated[
+        PackageLayout,
+        typer.Option(help='Source layout: `src` for `src/<package>/`, `flat` for `<package>/` at the repo root.'),
+    ] = PackageLayout.SRC,
     extras: Annotated[str, typer.Option(help='Optional install extras (e.g. all).')] = '',
     smoke_code: Annotated[
         str,
         typer.Option(help='Optional extra Python code to run after `import <package>` in the smoke test.'),
     ] = '',
 ) -> None:
-    src_path = (Path(src_package_dir) if src_package_dir else Path('src') / package).resolve()
+    if package_layout is PackageLayout.SRC:
+        src_path = (Path('src') / package).resolve()
+        sdist_prefix = 'src/'
+    else:
+        src_path = Path(package).resolve()
+        sdist_prefix = ''
 
     wheel, sdist = find_artifacts(dist_dir.resolve())
     info(f'package:  {package}')
+    info(f'layout:   {package_layout.value}')
     info(f'src dir:  {src_path}')
     info(f'wheel:    {wheel.name}')
     info(f'sdist:    {sdist.name}')
@@ -259,7 +277,7 @@ def main(
     info(f'data:     {len(data_files)}')
 
     results: list[bool] = [
-        check_sdist_contents(sdist_members, source_files, data_files),
+        check_sdist_contents(sdist_members, source_files, data_files, sdist_prefix),
         check_wheel_contents(wheel_members, source_files, data_files),
     ]
 

@@ -10,10 +10,12 @@ inputs:
   python_version:
     description: Python version to use for the verification venvs.
     required: true
-  src_package_dir:
-    description: Path to the package source directory, relative to the repository root. Defaults to `src/<package_name>`.
+  package_layout:
+    description: >
+      Source layout of the package: `src` for `src/<package_name>/` (default) or `flat` for `<package_name>/` at the
+      repository root.
     required: false
-    default: ""
+    default: "src"
   dist_dir:
     description: Directory containing the built sdist + wheel.
     required: false
@@ -44,7 +46,7 @@ runs:
         DIST_DIR: ${{ inputs.dist_dir }}
         PYTHON_VERSION: ${{ inputs.python_version }}
         EXTRAS: ${{ inputs.extras }}
-        SRC_PACKAGE_DIR: ${{ inputs.src_package_dir }}
+        PACKAGE_LAYOUT: ${{ inputs.package_layout }}
         SMOKE_CODE: ${{ inputs.smoke_code }}
       run: |
         uv run --no-project --script "${{ github.action_path }}/verify_built_package.py" \
@@ -52,5 +54,5 @@ runs:
           --dist-dir "$DIST_DIR" \
           --python-version "$PYTHON_VERSION" \
           --extras "$EXTRAS" \
-          --src-package-dir "$SRC_PACKAGE_DIR" \
+          --package-layout "$PACKAGE_LAYOUT" \
           --smoke-code "$SMOKE_CODE"
