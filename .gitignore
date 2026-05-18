@@ -6,3 +6,6 @@
 .mypy_cache
 node_modules/
 *.tsbuildinfo
+__pycache__/
+.ruff_cache/
+.ty_cache/
