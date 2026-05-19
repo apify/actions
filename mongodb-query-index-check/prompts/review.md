@@ -58,6 +58,12 @@ Reconstruct the before- and after-state of each MongoDB call and compare both ag
     Reason from the underlying principle for novel cases too: any operation that would be index-only on a non-sharded collection but suddenly needs document fetches on a sharded one is a candidate.
 9. **Query on a heavy-index collection without `hint`.** If the collection file in `$MONGO_INDEXES_DIR` has many `ensureIndex` calls (e.g. `actor_jobs.ts` for `Act2Runs` has 40+), the planner can spend tens of seconds evaluating candidate plans on cold caches. Recommend `hint: '<index name>'` to pin plan selection. The chosen index needs `name:` set; if it doesn't, recommend adding one first. 🟡 medium.
 10. **Read without `projection`.** `find()`, `findOne()`, and `findOneAnd*()` calls that omit a `projection` (either in the options object or via a chained `.project()`) return every field of every matched document — wasted IO, network bandwidth, and BSON parse time. Documents in `Users`, `Act2Runs`, etc. are easily 10–100 KB, and most callers only need a handful of fields. Flag any added/modified read that lacks a projection; suggest the smallest projection covering the fields actually consumed downstream (and just `{ _id: 1 }` for existence checks). Skip writes (`updateOne`, `deleteOne`, `bulkWrite`) and `aggregate` (which shapes via `$project` and is often a full transformation anyway). 🟡 medium.
+11. **Legacy `fields` option in place of `projection`.** Pre-3.x driver / Meteor-era syntax. It silently no-ops on the current MongoDB Node driver (the full document is returned), so the caller sees full docs while reviewers think the projection is in place. Flag any read where the options object contains a `fields:` key and suggest renaming to `projection:`. 🟢 low.
+12. **`$lookup` runs before `$match` / `$sort` / `$limit`.** `$lookup` is the most expensive aggregation stage — it iterates the foreign collection once per input doc. The right order is to narrow the input set first (`$match` on indexed fields → `$sort` → `$limit`) and only then `$lookup` on the top-N candidates. Flag pipelines where `$lookup` precedes a later `$match` / `$sort` / `$limit` that could move up. 🟠 high.
+13. **`$lookup` joined via `$expr` instead of `localField` / `foreignField`.** A `$lookup` whose nested `pipeline` uses `$expr: { $eq: ['$x', '$$x'] }` to do a plain equality join forces per-document evaluation on the foreign collection — the planner can't use an equality index, so it collscans the foreign collection once per input doc. When the join is plain equality, use the top-level `localField` / `foreignField` form so the equality index applies. 🟠 high.
+14. **`$group: { _id: '$field' }` with no accumulator (uniques).** When the only goal is the distinct set of values, use `Collection.distinct('field', filter)` instead — it's an index-aware server command, doesn't materialise a group, and returns a plain array. Flag any added `$group` whose only field is `_id` (no `$sum`, `$push`, `$addToSet`, …) and suggest `distinct`. 🟡 medium.
+15. **`updateMany` on a sharded collection.** Without the full shard key in the filter, the shard router can't target a single `updateMany` — it broadcasts to every shard. Even with the shard key, batched writes lose atomicity vs. per-op routing. Prefer `bulkWrite` (typically `ordered: false`) so each op carries its own shard-key-complete filter and writes parallelise. Flag added/modified `updateMany` calls on collections wrapped by `ShardAwareCollection` (use the same detection as pattern #3). 🟠 high.
+16. **`projection` set without narrowing the return type.** The Mongo driver's `findOne` / `find` return the full document type even when a literal `projection` is passed — un-projected fields type-check as defined but are `undefined` at runtime. The repo convention is `findOne<ProjectedShape>(filter, { projection: PROJECTION as const })` where `ProjectedShape = PickByDotNotation<Doc, keyof typeof PROJECTION>`. Flag added reads that pass a literal `projection` but don't supply a generic type argument on the call. 🟡 medium.
 
 ## Concrete examples
 
@@ -68,6 +74,10 @@ Reconstruct the before- and after-state of each MongoDB call and compare both ag
 - **🟠 high** — `Act2Runs.find({ userId, actId, removedAt: null }, { sort: { startedAt: -1 }, limit: 100, skip: 100_000 })` on a sharded collection without `readConcern: 'available'`. The `SHARDING_FILTER` stage fetches and orphan-checks the 100k skipped docs (~60s observed). Pass `readConcern: 'available'`, or refactor to cursor pagination using `startedAt < lastStartedAt`.
 - **🟡 medium** — `$or` with one indexed branch and one unindexed branch — flag the unindexed branch.
 - **🟡 medium** — `Users.findOne({ _id: id })` with no projection. Returns the full ~50 KB user document when the caller only reads `.username`. Suggest `{ projection: { username: 1 } }` (or `{ _id: 1 }` if it's an existence check).
+- **🟠 high** — `Acts2.aggregate([{ $lookup: { from: 'users', … } }, { $match: { actorId: { $nin: protectedIds } } }, { $sort: { … } }, { $limit: 20 } ])`. The `$lookup` runs on the full `Acts2` collection before the index-friendly `$match` / `$sort` / `$limit` narrow it down. Reorder so the `$match` → `$sort` → `$limit` precede the `$lookup`.
+- **🟠 high** — `$lookup: { from: 'actorBadges', let: { actorId: '$_id' }, pipeline: [{ $match: { $expr: { $eq: ['$actorId', '$$actorId'] } } }] }`. The `$expr` form prevents the planner from using the `{ actorId: 1 }` index on `actorBadges`. Switch to `{ from: 'actorBadges', localField: '_id', foreignField: 'actorId', as: '…' }`.
+- **🟠 high** — `Act2Runs.updateMany({ userId, status: 'RUNNING' }, { $set: { … } })` on a sharded collection. Replace with `bulkWrite` (one op per `_id`/`userId` pair, `ordered: false`) so each op carries its full shard key.
+- **🟡 medium** — `Users.findOne({ _id: id }, { projection: { username: 1 } })` with no generic. `user.username` types as `string` and reads fine, but `user.email` (not in the projection) also type-checks while being `undefined` at runtime. Use `findOne<Pick<User, '_id' | 'username'>>(…)` (or the `PickByDotNotation` helper for dotted keys).
 
 ## Severity classification
 
@@ -80,6 +90,9 @@ Apply this ESR-aware (Equality → Sort → Range) rubric. Pick the highest appl
   - **Sort can't use the index** (sort field absent from the index, or appears before equality fields).
   - Query uses **`$regex` without an anchor** (`/^…/`) on an indexed field — the regex still won't use the index without an anchor.
   - **`.skip(N)` / `$skip` on a sharded collection without `readConcern: 'available'`** — `SHARDING_FILTER` orphan-check dominates query time for large skips.
+  - `$lookup` runs before a later `$match` / `$sort` / `$limit` that could move up, ballooning the foreign-collection iteration.
+  - `$lookup` uses an `$expr` pipeline for a plain equality join, defeating the equality index on the foreign collection.
+  - `updateMany` on a sharded collection — broadcasts to every shard; should be `bulkWrite` with per-op shard-key filters.
 - 🟡 **medium** — An index exists and is used, but is **likely inefficient**:
   - Filter is on a **low-selectivity** field only (e.g. only on a boolean or status enum that covers most documents) and there's no further filter to narrow it.
   - **Read/return ratio likely poor**: index scans many docs the query then discards (e.g. range-then-equality compound order, or `$ne` / `$nin` on an indexed field).
@@ -87,10 +100,13 @@ Apply this ESR-aware (Equality → Sort → Range) rubric. Pick the highest appl
   - Multiple `$or` branches and at least one has no usable index.
   - Query on a collection with **many overlapping indexes** lacks `hint:` — planner spends tens of seconds choosing a plan.
   - Read returns the full document because `projection` was omitted — wastes IO and BSON parse time for collections with multi-KB documents.
+  - `$group: { _id: '$field' }` with no accumulator — use `Collection.distinct()` instead.
+  - `projection` is set on `findOne` / `find` but the call has no generic type argument — un-projected fields are `undefined` at runtime while TS still thinks they exist.
 - 🟢 **low** — Stylistic / advisory:
   - Could tighten an existing `partialFilterExpression` to reduce index size.
   - Project to fewer fields to make this a covered query.
   - Add a `name` to the index for easier identification.
+  - Legacy `fields:` option in place of `projection:` — silently no-ops on the current driver, so the read still returns the full document.
 
 ## Workflow
 
