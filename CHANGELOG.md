@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.0](https://github.com/apify/actions/compare/v1.1.2...v1.2.0) (2026-05-19)
+
+
+### Features
+
+* Update of MongoDB index checker, prompt, deduplication, etc. ([#17](https://github.com/apify/actions/issues/17)) ([86b91e4](https://github.com/apify/actions/commit/86b91e4edff0c8303012e4592345c0b75f91c790))
+
+
+### Bug Fixes
+
+* Update `signed-commit` action to fix issues with unstaged or conflicted files ([#22](https://github.com/apify/actions/issues/22)) ([5e8686c](https://github.com/apify/actions/commit/5e8686c8ee6814be65af30c049855cc220409150))
+
 ## [1.1.2](https://github.com/apify/actions/compare/v1.1.1...v1.1.2) (2026-05-18)
 
 
