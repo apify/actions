@@ -175,6 +175,148 @@ describe('signed commit action', () => {
         }
     });
 
+    describe('pull before commit', () => {
+        let remoteDir!: string;
+        let otherCloneDir!: string;
+
+        async function setUpRemote() {
+            // Bare "remote" repo + an "other clone" used to push divergent
+            // commits, so `git pull` inside `repoDir` has something to fetch.
+            remoteDir = await fs.mkdtemp(path.join(os.tmpdir(), 'apify-actions-remote-'));
+            otherCloneDir = await fs.mkdtemp(path.join(os.tmpdir(), 'apify-actions-otherclone-'));
+
+            await exec(`\
+                git init --bare
+                git symbolic-ref HEAD refs/heads/main
+            `, { cwd: remoteDir, shell: '/bin/bash' });
+
+            await doExec(`\
+                git remote add origin "${remoteDir}"
+                git branch -M main
+                git push -u origin main
+            `);
+
+            await exec(`\
+                git clone "${remoteDir}" .
+                git config user.name "other"
+                git config user.email "other@apify.com"
+            `, { cwd: otherCloneDir, shell: '/bin/bash' });
+        }
+
+        async function pushRemoteCommit(filePath: string, contents: string, message: string) {
+            await fs.writeFile(path.join(otherCloneDir, filePath), contents);
+            await exec(`\
+                git add '${filePath}'
+                git commit --no-gpg-sign -m '${message}'
+                git push origin main
+            `, { cwd: otherCloneDir, shell: '/bin/bash' });
+        }
+
+        afterEach(async () => {
+            if (remoteDir) await fs.rm(remoteDir, { recursive: true, force: true });
+            if (otherCloneDir) await fs.rm(otherCloneDir, { recursive: true, force: true });
+        });
+
+        it('commits staged changes after a successful --rebase --autostash pull', async () => {
+            await setUpRemote();
+
+            // Another author pushes an unrelated file to the remote — this
+            // makes the local branch behind, so `git pull --rebase` actually
+            // has work to do.
+            await pushRemoteCommit('remote_file.txt', 'from remote\n', 'remote: add file');
+
+            // Local change that the action would commit. Staged BEFORE the
+            // pull, mimicking the composite action's "stage → main()" order.
+            await fs.writeFile(path.join(repoDir, 'local_file.txt'), 'from local\n');
+            await doExec(`git add local_file.txt`);
+
+            const captured: any[] = [];
+            const fakeCore = {
+                info: () => {}, warning: () => {}, debug: () => {},
+                setOutput: () => {},
+            };
+            const fakeGithub = {
+                graphql: vi.fn(async (_query: string, vars: any) => {
+                    captured.push(vars);
+                    return { createCommitOnBranch: { commit: { oid: 'a'.repeat(40) } } };
+                }),
+            };
+
+            const originalCwd = process.cwd();
+            try {
+                process.chdir(repoDir);
+                await main({
+                    github: fakeGithub as any,
+                    core: fakeCore as any,
+                    env: {
+                        COMMIT_MESSAGE: 'chore: add local file',
+                        REPO: 'apify/actions',
+                        BRANCH: 'main',
+                        ADD: 'local_file.txt',
+                        PULL: '--rebase --autostash',
+                    },
+                });
+            } finally {
+                process.chdir(originalCwd);
+            }
+
+            expect(fakeGithub.graphql).toHaveBeenCalledOnce();
+            const { input: { fileChanges: { additions } } } = captured[0];
+            const local = additions.find((a: any) => a.path === 'local_file.txt');
+            expect(local, 'autostash-popped change must be re-staged and included in the commit').toBeTruthy();
+            expect(Buffer.from(local.contents, 'base64').toString()).toEqual('from local\n');
+        });
+
+        it('throws when --rebase --autostash leaves conflicts after pop', async () => {
+            // Reproduces the realistic failure mode that motivated the fix:
+            // `git pull --rebase --autostash` fast-forwards (or rebases)
+            // successfully, but `git stash pop` for the autostashed local
+            // changes produces a conflict against the new HEAD. Crucially,
+            // git pull EXITS 0 in this case — the index is left with
+            // unmerged paths and conflict markers, which would otherwise be
+            // committed as-is.
+            await setUpRemote();
+
+            // Seed a shared file via the remote.
+            await pushRemoteCommit('shared.txt', 'base\n', 'remote: add shared');
+            await doExec(`git pull --ff-only`);
+
+            // Remote modifies `shared.txt`.
+            await pushRemoteCommit('shared.txt', 'remote version\n', 'remote: modify shared');
+
+            // Locally, the (composite action's) "stage" step stages a
+            // conflicting modification to the same file.
+            await fs.writeFile(path.join(repoDir, 'shared.txt'), 'local version\n');
+            await doExec(`git add shared.txt`);
+
+            const fakeCore = {
+                info: () => {}, warning: () => {}, debug: () => {},
+                setOutput: () => {},
+            };
+            const fakeGithub = { graphql: vi.fn() };
+
+            const originalCwd = process.cwd();
+            try {
+                process.chdir(repoDir);
+                await expect(main({
+                    github: fakeGithub as any,
+                    core: fakeCore as any,
+                    env: {
+                        COMMIT_MESSAGE: 'chore: stuff',
+                        REPO: 'apify/actions',
+                        BRANCH: 'main',
+                        ADD: 'shared.txt',
+                        PULL: '--rebase --autostash',
+                    },
+                })).rejects.toThrow(/merge conflicts|unmerged/i);
+            } finally {
+                process.chdir(originalCwd);
+            }
+
+            expect(fakeGithub.graphql).not.toHaveBeenCalled();
+        });
+    });
+
     it('checks file modes and does not throw when correct', async () => {
         const validModes = [
             0o666,

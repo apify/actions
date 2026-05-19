@@ -162,6 +162,7 @@ export async function main({ github, env, core }: { github: Octokit, env: Record
         COMMIT_MESSAGE,
         REPO,
         BRANCH,
+        ADD = '',
         PULL = '',
         RETRIES = '0',
     } = env;
@@ -183,7 +184,19 @@ export async function main({ github, env, core }: { github: Octokit, env: Record
         if (PULL !== '') {
             const pullCmd = PULL === 'true' ? 'git pull' : `git pull ${PULL}`;
             core.info(`Executing "${pullCmd}" before committing (attempt ${attempt}/${maxAttempts})`);
-            await exec(pullCmd, { encoding: 'utf8' });
+            const { stdout, stderr } = await exec(pullCmd, { encoding: 'utf8' });
+            core.debug(`pull stdout: ${stdout}`);
+            core.debug(`pull stderr: ${stderr}`);
+
+            // Check if there are any merge conflicts after the pull.
+            const unmerged = (await exec('git ls-files --unmerged', { encoding: 'utf8' })).stdout.trim();
+            if (unmerged !== '') {
+                throw new Error(`"${pullCmd}" left unmerged paths in the index — refusing to commit files with merge conflicts:\n${unmerged}`);
+            }
+        }
+
+        if (ADD !== '') {
+            await exec(`git add ${ADD}`, { encoding: 'utf8' });
         }
 
         const expectedHeadOid = (await exec('git rev-parse HEAD', { encoding: 'utf8' })).stdout.trim();
