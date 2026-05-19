@@ -107,7 +107,9 @@ runs:
         ref: develop
         token: ${{ inputs.apify-core-token }}
         path: __mongo_index_check_apify_core
-        sparse-checkout: src/packages/mongo-indexes/src
+        sparse-checkout: |
+          src/packages/mongo-indexes/src
+          src/packages/mongo-connection/src/shard_aware_collection
         sparse-checkout-cone-mode: false
         fetch-depth: 1
 
@@ -119,12 +121,14 @@ runs:
       run: |
         set -euo pipefail
         if [ -n "$APIFY_CORE_TOKEN" ]; then
-          indexes_dir="${GITHUB_WORKSPACE}/__mongo_index_check_apify_core/src/packages/mongo-indexes/src"
+          repo_root="${GITHUB_WORKSPACE}/__mongo_index_check_apify_core"
           origin_label="apify-core@develop"
         else
-          indexes_dir="${GITHUB_WORKSPACE}/src/packages/mongo-indexes/src"
+          repo_root="${GITHUB_WORKSPACE}"
           origin_label="local workspace (assuming caller is apify-core)"
         fi
+        indexes_dir="${repo_root}/src/packages/mongo-indexes/src"
+        shard_aware_dir="${repo_root}/src/packages/mongo-connection/src/shard_aware_collection"
         if [ ! -d "$indexes_dir" ]; then
           echo "::error::Could not find mongo-indexes source directory at: $indexes_dir"
           exit 1
@@ -132,6 +136,14 @@ runs:
         file_count=$(find "$indexes_dir" -maxdepth 2 -type f -name '*.ts' | wc -l)
         echo "Resolved mongo-indexes from ${origin_label}: ${indexes_dir} (${file_count} .ts file(s))."
         echo "MONGO_INDEXES_DIR=${indexes_dir}" >> "$GITHUB_ENV"
+        # Optional: surface the ShardAwareCollection source so Claude can verify shard keys directly.
+        # Skipped silently if absent (older apify-core ref, partial sparse checkout, etc.).
+        if [ -d "$shard_aware_dir" ]; then
+          echo "Resolved ShardAwareCollection sources at ${shard_aware_dir}."
+          echo "SHARD_AWARE_COLLECTION_DIR=${shard_aware_dir}" >> "$GITHUB_ENV"
+        else
+          echo "SHARD_AWARE_COLLECTION_DIR=" >> "$GITHUB_ENV"
+        fi
 
     - name: Render Claude prompt
       id: render
@@ -146,7 +158,7 @@ runs:
       run: |
         set -euo pipefail
         prompt_file="${RUNNER_TEMP}/mongo-index-prompt.md"
-        envsubst '$PR_NUMBER $REPO $BASE_SHA $HEAD_SHA $MONGO_INDEXES_DIR $CHANGED_FILES_PATH $RESULT_PATH $REQUEST_CHANGES_MODE' \
+        envsubst '$PR_NUMBER $REPO $BASE_SHA $HEAD_SHA $MONGO_INDEXES_DIR $SHARD_AWARE_COLLECTION_DIR $CHANGED_FILES_PATH $RESULT_PATH $REQUEST_CHANGES_MODE' \
           < "${GITHUB_ACTION_PATH}/prompts/review.md" \
           > "$prompt_file"
         delimiter="EOF_${RANDOM}${RANDOM}${RANDOM}"
