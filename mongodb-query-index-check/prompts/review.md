@@ -57,6 +57,7 @@ Reconstruct the before- and after-state of each MongoDB call and compare both ag
 
     Reason from the underlying principle for novel cases too: any operation that would be index-only on a non-sharded collection but suddenly needs document fetches on a sharded one is a candidate.
 9. **Query on a heavy-index collection without `hint`.** If the collection file in `$MONGO_INDEXES_DIR` has many `ensureIndex` calls (e.g. `actor_jobs.ts` for `Act2Runs` has 40+), the planner can spend tens of seconds evaluating candidate plans on cold caches. Recommend `hint: '<index name>'` to pin plan selection. The chosen index needs `name:` set; if it doesn't, recommend adding one first. 🟡 medium.
+10. **Read without `projection`.** `find()`, `findOne()`, and `findOneAnd*()` calls that omit a `projection` (either in the options object or via a chained `.project()`) return every field of every matched document — wasted IO, network bandwidth, and BSON parse time. Documents in `Users`, `Act2Runs`, etc. are easily 10–100 KB, and most callers only need a handful of fields. Flag any added/modified read that lacks a projection; suggest the smallest projection covering the fields actually consumed downstream (and just `{ _id: 1 }` for existence checks). Skip writes (`updateOne`, `deleteOne`, `bulkWrite`) and `aggregate` (which shapes via `$project` and is often a full transformation anyway). 🟡 medium.
 
 ## Concrete examples
 
@@ -66,6 +67,7 @@ Reconstruct the before- and after-state of each MongoDB call and compare both ag
 - **🟠 high** — `Act2Runs.find({ status })` on a collection sharded by `userId`. Fans out to every shard.
 - **🟠 high** — `Act2Runs.find({ userId, actId, removedAt: null }, { sort: { startedAt: -1 }, limit: 100, skip: 100_000 })` on a sharded collection without `readConcern: 'available'`. The `SHARDING_FILTER` stage fetches and orphan-checks the 100k skipped docs (~60s observed). Pass `readConcern: 'available'`, or refactor to cursor pagination using `startedAt < lastStartedAt`.
 - **🟡 medium** — `$or` with one indexed branch and one unindexed branch — flag the unindexed branch.
+- **🟡 medium** — `Users.findOne({ _id: id })` with no projection. Returns the full ~50 KB user document when the caller only reads `.username`. Suggest `{ projection: { username: 1 } }` (or `{ _id: 1 }` if it's an existence check).
 
 ## Severity classification
 
@@ -84,6 +86,7 @@ Apply this ESR-aware (Equality → Sort → Range) rubric. Pick the highest appl
   - Sort uses the index but the direction doesn't match (compound index would need a reverse scan).
   - Multiple `$or` branches and at least one has no usable index.
   - Query on a collection with **many overlapping indexes** lacks `hint:` — planner spends tens of seconds choosing a plan.
+  - Read returns the full document because `projection` was omitted — wastes IO and BSON parse time for collections with multi-KB documents.
 - 🟢 **low** — Stylistic / advisory:
   - Could tighten an existing `partialFilterExpression` to reduce index size.
   - Project to fewer fields to make this a covered query.
@@ -141,7 +144,7 @@ For each finding, point `path` and `line` at the **after-state RIGHT line** of t
 
     {{1–3 sentences describing the issue. Reference the specific filter fields and the specific existing index by its `fields + name` if it has a name. Be concrete.}}
 
-    **Suggested action**: {{Either point to an existing index that should be used and what to adjust in the query, or recommend adding a new index in `src/packages/mongo-indexes/src/<file>.ts`. Be specific about which fields and partial-filter expressions.}}
+    **Suggested action**: {{Prefer fixes that don't add new indexes — busy collections (`Users`, `Act2Runs`, …) already have dozens and the explicit goal is to shrink that surface, not grow it. In order of preference: (1) adjust the query to fit an existing index — add the missing prefix field, include the `partialFilterExpression` qualifier, drop the offending sort, switch to cursor pagination, add a `projection`, etc.; name the index by `name:` if it has one, else by key spec. (2) Extend or replace an existing index so it covers both this query and its current callers (e.g. add one field to a compound) — name the index to modify and the new shape. (3) Only as a last resort, recommend a new index in `src/packages/mongo-indexes/src/<file>.ts`, and explicitly say why (1) and (2) don't work.}}
 
 Where `{{SEVERITY_EMOJI}}` / `{{SEVERITY_WORD}}` is one of `🔴 critical`, `🟠 high`, `🟡 medium`, `🟢 low`.
 
