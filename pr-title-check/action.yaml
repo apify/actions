@@ -1,0 +1,30 @@
+name: "PR title check"
+description: "Check PR title for typos and conventional commit format"
+
+inputs:
+  github-token:
+    description: "GitHub token for the semantic PR title check"
+    required: false
+    default: ${{ github.token }}
+
+runs:
+  using: "composite"
+  steps:
+    # Needed to access `_typos.toml` from the repository
+    - uses: actions/checkout@v4
+
+    - name: Write PR title to file
+      shell: bash
+      run: echo "$PR_TITLE" > /tmp/pr-title.txt
+      env:
+        PR_TITLE: ${{ github.event.pull_request.title }}
+
+    - name: Spell-check PR title
+      uses: crate-ci/typos@master
+      with:
+        files: /tmp/pr-title.txt
+
+    - name: Check PR title follows conventional commits
+      uses: amannn/action-semantic-pull-request@v6.1.1
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
