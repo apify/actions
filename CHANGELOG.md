@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.0](https://github.com/apify/actions/compare/v1.2.0...v1.3.0) (2026-05-22)
+
+
+### Features
+
+* extend MongoDB index-check prompt with six more review patterns ([#21](https://github.com/apify/actions/issues/21)) ([8bab229](https://github.com/apify/actions/commit/8bab22948562bab4bb1a4a962e5571709676550f))
+* PR title check action ([#24](https://github.com/apify/actions/issues/24)) ([28507c2](https://github.com/apify/actions/commit/28507c283529cfd5de11f7046443d25a39cb73e4))
+
 ## [1.2.0](https://github.com/apify/actions/compare/v1.1.2...v1.2.0) (2026-05-19)
 
 
