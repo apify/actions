@@ -41,43 +41,98 @@ Then **cross-reference against the indexes** for that collection by reading the 
 
 ## Common change patterns to flag
 
-Reconstruct the before- and after-state of each MongoDB call and compare both against the indexes. Most missed regressions match one of these:
+Reconstruct the before- and after-state of each MongoDB call and compare both against the indexes. Sharding-related issues have their own dedicated section below — apply the rules here for non-sharding index problems. Most missed regressions match one of these:
 
 1. **Partial-filter qualifier dropped or rewritten.** If a candidate index has `partialFilterExpression: { removedAt: null }`, the after-query must include every key. Removing or rewriting it (e.g. `removedAt: null` → `disabledAt: { $ne: null }`) makes the index unusable.
 2. **New `sort` outside the chosen index's ESR position.** Sort field must follow all equality fields in the index, else in-memory sort.
-3. **Sharded collection query omits the shard key from its filter / `$match`.** Sharded queries should include the shard key (in the `find()` filter, the filter argument of `findOneAnd*` / `updateOne` / `deleteOne` / etc., or the first `$match` of an `aggregate`) — without it, MongoDB fans the query out to every shard. The canonical source for shard keys is the `ShardAwareCollection` class in `apify/apify-core`'s `mongo-connection` package — its constructor takes the shard keys as the second positional argument: `new ShardAwareCollection<TSchema, TShardKeys>(collection, shardKeys, openTelemetry?)`, used like `new ShardAwareCollection<ActorRun, 'userId' | '_id'>(this.Act2Runs, ['userId', '_id'], openTelemetry)` — meaning `Act2Runs` is sharded on `[userId, _id]`. To find shard keys for a collection, grep the workspace for `new ShardAwareCollection<` and read off the array literal at the matching usage. Secondary signal: a `// For sharding <Collection>` comment in the matching `$MONGO_INDEXES_DIR/<file>.ts`. When neither source confirms sharding, prefer not to flag.
-4. **New or modified `$or` branch.** Each branch is matched independently. Flag any branch without an index.
-5. **Equality → negation** (`$ne`, `$nin`, `$not`, `$exists: false`). Forces a scan even on indexed fields.
-6. **Unanchored `$regex` on an indexed field.** Only `/^prefix/` uses the index.
-7. **Range filter before equality in a compound query.** ESR order: equality, sort, range. Reversing neutralises the index.
-8. **Sharded-collection operation that should pass `readConcern: 'available'`.** Sharded chunks can contain orphan documents (residual from chunk migrations). For operations that would normally be served from the index alone, MongoDB has to fetch every candidate document and run a `SHARDING_FILTER` stage to drop orphans — expensive at scale. Passing `readConcern: 'available'` bypasses that filter at the cost of possibly including a few orphans (fine for most read paths). Known examples:
-    - **`.skip(N)` / `$skip: N`** — must fetch every skipped doc for the orphan check; measured ~60s on `Act2Runs` at skip=100k. Suggest `readConcern: 'available'` or cursor pagination using the sort key (e.g. `startedAt < lastStartedAt` for a `sort: { startedAt: -1 }` cursor).
-    - **Count operations** — `ShardAwareCollection.approximateCountDocuments()` wraps `readConcern: 'available'` already, so **don't flag it**. Plain `.countDocuments()` on the underlying `Collection` (or via `.rawCollection`) on a sharded collection does *not* — flag those.
-    - **`aggregate` stages that traverse a wide index range without narrowing down** (`$count`, `$group` over many keys) — likely same problem.
+3. **New or modified `$or` branch.** Each branch is matched independently. Flag any branch without an index.
+4. **Equality → negation** (`$ne`, `$nin`, `$not`, `$exists: false`). Forces a scan even on indexed fields.
+5. **Unanchored `$regex` on an indexed field.** Only `/^prefix/` uses the index.
+6. **Range filter before equality in a compound query.** ESR order: equality, sort, range. Reversing neutralises the index.
+7. **Query on a heavy-index collection without `hint`.** If the collection file in `$MONGO_INDEXES_DIR` has many `ensureIndex` calls (e.g. `actor_jobs.ts` for `Act2Runs` has 40+), the planner can spend tens of seconds evaluating candidate plans on cold caches. Recommend `hint: '<index name>'` to pin plan selection. The chosen index needs `name:` set; if it doesn't, recommend adding one first. 🟡 medium.
+8. **Read without `projection`.** `find()`, `findOne()`, and `findOneAnd*()` calls that omit a `projection` (either in the options object or via a chained `.project()`) return every field of every matched document — wasted IO, network bandwidth, and BSON parse time. Documents in `Users`, `Act2Runs`, etc. are easily 10–100 KB, and most callers only need a handful of fields. Flag any added/modified read that lacks a projection; suggest the smallest projection covering the fields actually consumed downstream (and just `{ _id: 1 }` for existence checks). Skip writes (`updateOne`, `deleteOne`, `bulkWrite`) and `aggregate` (which shapes via `$project` and is often a full transformation anyway). 🟡 medium.
+9. **Legacy `fields` option in place of `projection`.** Pre-3.x driver / Meteor-era syntax. It silently no-ops on the current MongoDB Node driver (the full document is returned), so the caller sees full docs while reviewers think the projection is in place. Flag any read where the options object contains a `fields:` key and suggest renaming to `projection:`. 🟢 low.
+10. **`$lookup` runs before `$match` / `$sort` / `$limit`.** `$lookup` is the most expensive aggregation stage — it iterates the foreign collection once per input doc. The right order is to narrow the input set first (`$match` on indexed fields → `$sort` → `$limit`) and only then `$lookup` on the top-N candidates. Flag pipelines where `$lookup` precedes a later `$match` / `$sort` / `$limit` that could move up. 🟠 high.
+11. **`$lookup` joined via `$expr` instead of `localField` / `foreignField`.** A `$lookup` whose nested `pipeline` uses `$expr: { $eq: ['$x', '$$x'] }` to do a plain equality join forces per-document evaluation on the foreign collection — the planner can't use an equality index, so it collscans the foreign collection once per input doc. When the join is plain equality, use the top-level `localField` / `foreignField` form so the equality index applies. 🟠 high.
+12. **`$group: { _id: '$field' }` with no accumulator (uniques).** When the only goal is the distinct set of values, use `Collection.distinct('field', filter)` instead — it's an index-aware server command, doesn't materialise a group, and returns a plain array. Flag any added `$group` whose only field is `_id` (no `$sum`, `$push`, `$addToSet`, …) and suggest `distinct`. 🟡 medium.
+13. **`projection` set without narrowing the return type.** The Mongo driver's `findOne` / `find` return the full document type even when a literal `projection` is passed — un-projected fields type-check as defined but are `undefined` at runtime. The repo convention is `findOne<ProjectedShape>(filter, { projection: PROJECTION as const })` where `ProjectedShape = PickByDotNotation<Doc, keyof typeof PROJECTION>`. Flag added reads that pass a literal `projection` but don't supply a generic type argument on the call. 🟡 medium.
 
-    Reason from the underlying principle for novel cases too: any operation that would be index-only on a non-sharded collection but suddenly needs document fetches on a sharded one is a candidate.
-9. **Query on a heavy-index collection without `hint`.** If the collection file in `$MONGO_INDEXES_DIR` has many `ensureIndex` calls (e.g. `actor_jobs.ts` for `Act2Runs` has 40+), the planner can spend tens of seconds evaluating candidate plans on cold caches. Recommend `hint: '<index name>'` to pin plan selection. The chosen index needs `name:` set; if it doesn't, recommend adding one first. 🟡 medium.
-10. **Read without `projection`.** `find()`, `findOne()`, and `findOneAnd*()` calls that omit a `projection` (either in the options object or via a chained `.project()`) return every field of every matched document — wasted IO, network bandwidth, and BSON parse time. Documents in `Users`, `Act2Runs`, etc. are easily 10–100 KB, and most callers only need a handful of fields. Flag any added/modified read that lacks a projection; suggest the smallest projection covering the fields actually consumed downstream (and just `{ _id: 1 }` for existence checks). Skip writes (`updateOne`, `deleteOne`, `bulkWrite`) and `aggregate` (which shapes via `$project` and is often a full transformation anyway). 🟡 medium.
-11. **Legacy `fields` option in place of `projection`.** Pre-3.x driver / Meteor-era syntax. It silently no-ops on the current MongoDB Node driver (the full document is returned), so the caller sees full docs while reviewers think the projection is in place. Flag any read where the options object contains a `fields:` key and suggest renaming to `projection:`. 🟢 low.
-12. **`$lookup` runs before `$match` / `$sort` / `$limit`.** `$lookup` is the most expensive aggregation stage — it iterates the foreign collection once per input doc. The right order is to narrow the input set first (`$match` on indexed fields → `$sort` → `$limit`) and only then `$lookup` on the top-N candidates. Flag pipelines where `$lookup` precedes a later `$match` / `$sort` / `$limit` that could move up. 🟠 high.
-13. **`$lookup` joined via `$expr` instead of `localField` / `foreignField`.** A `$lookup` whose nested `pipeline` uses `$expr: { $eq: ['$x', '$$x'] }` to do a plain equality join forces per-document evaluation on the foreign collection — the planner can't use an equality index, so it collscans the foreign collection once per input doc. When the join is plain equality, use the top-level `localField` / `foreignField` form so the equality index applies. 🟠 high.
-14. **`$group: { _id: '$field' }` with no accumulator (uniques).** When the only goal is the distinct set of values, use `Collection.distinct('field', filter)` instead — it's an index-aware server command, doesn't materialise a group, and returns a plain array. Flag any added `$group` whose only field is `_id` (no `$sum`, `$push`, `$addToSet`, …) and suggest `distinct`. 🟡 medium.
-15. **`updateMany` on a sharded collection.** Without the full shard key in the filter, the shard router can't target a single `updateMany` — it broadcasts to every shard. Even with the shard key, batched writes lose atomicity vs. per-op routing. Prefer `bulkWrite` (typically `ordered: false`) so each op carries its own shard-key-complete filter and writes parallelise. Flag added/modified `updateMany` calls on collections wrapped by `ShardAwareCollection` (use the same detection as pattern #3). 🟠 high.
-16. **`projection` set without narrowing the return type.** The Mongo driver's `findOne` / `find` return the full document type even when a literal `projection` is passed — un-projected fields type-check as defined but are `undefined` at runtime. The repo convention is `findOne<ProjectedShape>(filter, { projection: PROJECTION as const })` where `ProjectedShape = PickByDotNotation<Doc, keyof typeof PROJECTION>`. Flag added reads that pass a literal `projection` but don't supply a generic type argument on the call. 🟡 medium.
+## Sharded collections
+
+Sharding splits a collection's data across multiple physical shards. Queries that don't include the shard key force MongoDB to broadcast to every shard ("scatter-gather"), which is slow and doesn't scale. **However, scatter-gather is sometimes deliberate** — when a query genuinely needs documents from every shard, the team uses explicit opt-out patterns (below). Flagging those wastes reviewer time. Apply the rules in this section *only* after ruling out the intentional patterns. **Be conservative — false positives are worse than missed findings here. When in doubt, skip.**
+
+### How to identify sharded collections
+
+Two distinct kinds of "sharded" exist in this codebase:
+
+1. **Multi-shard collections** — the same collection's data is split across multiple physical shards via a shard key. Identify these by reading `src/packages/mongo-connection/src/mongo_connection.ts`: any field typed as `ShardAwareCollection<TSchema, TShardKeys>` is multi-shard. The second generic argument lists the shard-key fields.
+2. **Single-shard placement** — the collection lives on a non-default physical shard (no shard key, no chunks across shards, just placed on a different machine). Identify these from `src/packages/mongo-connection/src/shard_placement.ts` (`SHARD_PLACEMENT` map). Collections absent from that map live on the default shard.
+
+Read those two files to determine each collection's sharding kind. The prompt deliberately doesn't list specific collections — the set evolves over time, and the source files are authoritative.
+
+### Intentional patterns — do NOT flag
+
+The team uses these as explicit opt-outs. When you see any of them, the developer has made a deliberate choice and the resulting scatter-gather is on purpose; skip silently:
+
+- **`field: undefined` literal** on a multi-shard collection method (e.g. `Collection.findOne({ userId: undefined, _id })`). This is the documented way to perform an intentional scatter-gather — the type system already enforces visibility, so the developer chose this knowingly.
+- **`speculative(value)` wrap** on a shard-key field — also a documented pattern.
+- **`.rawCollection.method(...)` access** — the `ShardAwareCollection` wrapper was bypassed deliberately.
+- **A nearby `// scatter-gather: ...` / `// fan-out: ...` / `// no shard key on purpose` comment** within ~3 lines above the call.
+- **Test files** (`*.test.ts`, `*.spec.ts`, files under `test/` / `tests/`) using `.rawCollection` for setup, seeding, teardown, or assertions. Tests regularly bypass shard-key constraints to insert canned data — this is the standard pattern, not a violation. The action's path filter already excludes test files; this is a belt-and-braces note for any that slip through.
+
+### Rules
+
+**SC-1. Shard key in filter / `$match` (multi-shard collections only).**
+A multi-shard collection query (`find` / `findOne` / `findOneAnd*` / `updateOne` / `deleteOne` / first `$match` of `aggregate`) should include all shard-key fields in the filter. Without the shard key, the router broadcasts to every shard.
+
+Flag only when ALL of the following hold:
+- The collection is multi-shard (per `mongo_connection.ts`).
+- At least one shard-key field is *entirely absent* from the filter object — not just `undefined`, *missing*.
+- No intentional opt-out signal is present.
+- A value that obviously corresponds to the missing shard key is in scope at the call site (e.g. a `userId` variable when the missing key is `userId`).
+
+If the first three hold but the fourth doesn't, downgrade to 🟡 medium ("consider plumbing the shard key through"); otherwise 🟠 high.
+
+**SC-2. `readConcern: 'available'` for full-scan operations on multi-shard collections.**
+On multi-shard collections, operations that would otherwise read straight from the index have to fetch every candidate document to drop orphans (`SHARDING_FILTER` stage). Passing `readConcern: 'available'` skips that filter at the cost of possibly including a few orphans — acceptable for most read paths.
+
+Flag when these run on a multi-shard collection without `readConcern: 'available'`:
+- `.skip(N)` / `$skip: N`. Suggest cursor pagination on the sort key as the better alternative; `readConcern: 'available'` is a fallback. 🟠 high.
+- `.countDocuments(...)` on `.rawCollection` or on the underlying `Collection`. Note: `ShardAwareCollection.approximateCountDocuments()` already wraps `readConcern: 'available'` — **do not flag it**. 🟠 high.
+- `aggregate` ending in `$count` or with wide `$group` over many keys. 🟠 high.
+
+Does **not** apply to single-shard-placement collections — there are no orphans there.
+
+**SC-3. `$lookup` / `$graphLookup` / `$unionWith` involving a multi-shard collection.**
+When either the source (the `.aggregate(...)` target) or the foreign collection (`from:` / `coll:`) is multi-shard, MongoDB has to route the join across the cluster's chunks — slow and doesn't scale.
+
+Resolve both endpoints by reading `mongo_connection.ts` (`ShardAwareCollection<...>` typing). Flag when at least one side is multi-shard AND the other endpoint is determinable. If either endpoint is dynamic (variable `from:`, computed receiver) and can't be resolved, skip — don't guess. 🟠 high.
+
+Suggested fix: split the `$lookup` into separate `find`/`findOne` round-trips on the application side, or denormalise.
+
+**SC-4. `$lookup` / `$graphLookup` / `$unionWith` across different physical shards.**
+Independent of SC-3: even between two non-sharded collections, if they live on *different* physical shards (per `SHARD_PLACEMENT`), the join requires cross-shard data movement.
+
+Read `SHARD_PLACEMENT` in `shard_placement.ts` to resolve each side's shard tag (default = `shard-0` for collections absent from the map). Flag only when both endpoints resolve to specific shard tags AND those tags differ. If either is unresolvable, skip. 🟠 high.
+
+**SC-5. `updateMany` / `deleteMany` on a multi-shard collection via `.rawCollection`.**
+`ShardAwareCollection` exposes `dangerouslyUpdateMany` which automatically loops until no further updates apply (required because chunk migrations can miss documents). Plain `updateMany` / `deleteMany` on `.rawCollection` bypasses that loop, so missed-doc bugs become silent.
+
+Flag added/modified `.rawCollection.updateMany(...)` / `.rawCollection.deleteMany(...)` on multi-shard collections that lack a justifying nearby comment. 🟠 high. Suggested fix: use `dangerouslyUpdateMany` / `deleteMany` on the `ShardAwareCollection` wrapper.
+
+Does **not** apply to test files (see intentional patterns above) or to single-shard-placement collections.
 
 ## Concrete examples
 
 - **OK ✅** — `Act2Runs.find({ userId, status, removedAt: null }).sort({ startedAt: -1 })` against index `{ userId: 1, status: 1, startedAt: -1 }` with `partialFilterExpression: { removedAt: null }`. Prefix matches, sort follows equality, partial filter matches.
 - **🟠 high** — same query without `removedAt: null`. Partial-filter index no longer applies. Name the dropped key in the comment.
 - **🟠 high** — `.sort({ 'profile.name': 1 })` added to a query whose chosen index is `{ userId: 1, finishedAt: 1 }`. In-memory sort.
-- **🟠 high** — `Act2Runs.find({ status })` on a collection sharded by `userId`. Fans out to every shard.
-- **🟠 high** — `Act2Runs.find({ userId, actId, removedAt: null }, { sort: { startedAt: -1 }, limit: 100, skip: 100_000 })` on a sharded collection without `readConcern: 'available'`. The `SHARDING_FILTER` stage fetches and orphan-checks the 100k skipped docs (~60s observed). Pass `readConcern: 'available'`, or refactor to cursor pagination using `startedAt < lastStartedAt`.
 - **🟡 medium** — `$or` with one indexed branch and one unindexed branch — flag the unindexed branch.
 - **🟡 medium** — `Users.findOne({ _id: id })` with no projection. Returns the full ~50 KB user document when the caller only reads `.username`. Suggest `{ projection: { username: 1 } }` (or `{ _id: 1 }` if it's an existence check).
 - **🟠 high** — `Acts2.aggregate([{ $lookup: { from: 'users', … } }, { $match: { actorId: { $nin: protectedIds } } }, { $sort: { … } }, { $limit: 20 } ])`. The `$lookup` runs on the full `Acts2` collection before the index-friendly `$match` / `$sort` / `$limit` narrow it down. Reorder so the `$match` → `$sort` → `$limit` precede the `$lookup`.
 - **🟠 high** — `$lookup: { from: 'actorBadges', let: { actorId: '$_id' }, pipeline: [{ $match: { $expr: { $eq: ['$actorId', '$$actorId'] } } }] }`. The `$expr` form prevents the planner from using the `{ actorId: 1 }` index on `actorBadges`. Switch to `{ from: 'actorBadges', localField: '_id', foreignField: 'actorId', as: '…' }`.
-- **🟠 high** — `Act2Runs.updateMany({ userId, status: 'RUNNING' }, { $set: { … } })` on a sharded collection. Replace with `bulkWrite` (one op per `_id`/`userId` pair, `ordered: false`) so each op carries its full shard key.
 - **🟡 medium** — `Users.findOne({ _id: id }, { projection: { username: 1 } })` with no generic. `user.username` types as `string` and reads fine, but `user.email` (not in the projection) also type-checks while being `undefined` at runtime. Use `findOne<Pick<User, '_id' | 'username'>>(…)` (or the `PickByDotNotation` helper for dotted keys).
+- **NOT a finding** — `Datasets.findOne({ userId: undefined, _id })` on a multi-shard collection. The explicit `undefined` is the documented opt-out pattern; the developer chose scatter-gather on purpose. See "Intentional patterns" in the Sharded collections section.
 
 ## Severity classification
 
@@ -89,10 +144,9 @@ Apply this ESR-aware (Equality → Sort → Range) rubric. Pick the highest appl
   - **Partial filter expression** of the matching index is incompatible with the query (e.g. index has `partialFilterExpression: { removedAt: null }` but the query also wants `removedAt: { $exists: true }`).
   - **Sort can't use the index** (sort field absent from the index, or appears before equality fields).
   - Query uses **`$regex` without an anchor** (`/^…/`) on an indexed field — the regex still won't use the index without an anchor.
-  - **`.skip(N)` / `$skip` on a sharded collection without `readConcern: 'available'`** — `SHARDING_FILTER` orphan-check dominates query time for large skips.
   - `$lookup` runs before a later `$match` / `$sort` / `$limit` that could move up, ballooning the foreign-collection iteration.
   - `$lookup` uses an `$expr` pipeline for a plain equality join, defeating the equality index on the foreign collection.
-  - `updateMany` on a sharded collection — broadcasts to every shard; should be `bulkWrite` with per-op shard-key filters.
+  - Any rule from the Sharded collections section flagged at 🟠 high (SC-1 when shard key is reachable, SC-2, SC-3, SC-4, SC-5).
 - 🟡 **medium** — An index exists and is used, but is **likely inefficient**:
   - Filter is on a **low-selectivity** field only (e.g. only on a boolean or status enum that covers most documents) and there's no further filter to narrow it.
   - **Read/return ratio likely poor**: index scans many docs the query then discards (e.g. range-then-equality compound order, or `$ne` / `$nin` on an indexed field).
@@ -102,6 +156,7 @@ Apply this ESR-aware (Equality → Sort → Range) rubric. Pick the highest appl
   - Read returns the full document because `projection` was omitted — wastes IO and BSON parse time for collections with multi-KB documents.
   - `$group: { _id: '$field' }` with no accumulator — use `Collection.distinct()` instead.
   - `projection` is set on `findOne` / `find` but the call has no generic type argument — un-projected fields are `undefined` at runtime while TS still thinks they exist.
+  - SC-1 downgrade: shard-key field is absent but no obviously matching value is in scope at the call site.
 - 🟢 **low** — Stylistic / advisory:
   - Could tighten an existing `partialFilterExpression` to reduce index size.
   - Project to fewer fields to make this a covered query.
@@ -117,7 +172,7 @@ Follow these steps in order:
 - Read `$CHANGED_FILES_PATH` (a JSON array of file paths). Use `Read` or `cat`.
 - For each file, fetch its diff. Prefer the GitHub MCP server (e.g. `mcp__github__pull_request_read` with `get_diff` / `get_files`, passing owner+repo from `$REPO` and `pull_number: $PR_NUMBER`). If that tool isn't available, fall back to `gh pr diff $PR_NUMBER --repo $REPO -- <path>` via Bash. Focus on diff hunks that contain at least one added line — in those hunks, the after-state (added lines plus their unchanged context) is the surface to analyze; ignore hunks that contain only deletions.
 - For each MongoDB call you find, identify the collection and read `$MONGO_INDEXES_DIR/<collection-snake-case>.ts` to learn the available indexes. Use `Read` (preferred) or `cat` / `grep` / `find`.
-- When you need to confirm whether a collection is sharded (or on which keys), grep the workspace for `new ShardAwareCollection<` and read off the shard-key array from the matching usage.
+- When the call involves a potentially sharded collection (see the Sharded collections section), read `src/packages/mongo-connection/src/mongo_connection.ts` (for `ShardAwareCollection<...>` typing) and `src/packages/mongo-connection/src/shard_placement.ts` (for `SHARD_PLACEMENT`) to determine the sharding kind.
 
 ### 2. Decide findings
 
@@ -125,7 +180,7 @@ For each MongoDB call you identified:
 
 1. **Reconstruct the before- and after-state of the query** (filter, sort, projection). Check **both** against the indexes — a partial-filter regression can only be seen this way.
 2. **Read every index for the collection** from `$MONGO_INDEXES_DIR/<collection>.ts`. Score each against the after-query for (a) ESR prefix match, (b) `partialFilterExpression` match, (c) sort/range field position.
-3. **Walk through "Common change patterns to flag" above.** The patterns are the checklist; the rubric is the severity.
+3. **Walk through "Common change patterns to flag" above, then the "Sharded collections" rules.** The patterns are the checklist; the rubric is the severity. For sharded-collection rules, always apply the "Intentional patterns — do NOT flag" filter first.
 4. **Pick the best index, grade the gap.** No usable index → 🔴 critical. Index exists but query doesn't fit (prefix / partial filter / sort) → 🟠 high. Usable but inefficient → 🟡 medium.
 
 Guardrails:
