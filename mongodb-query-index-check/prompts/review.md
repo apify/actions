@@ -66,7 +66,7 @@ Sharding splits a collection's data across multiple physical shards. Queries tha
 Two distinct kinds of "sharded" exist in this codebase:
 
 1. **Multi-shard collections** — the same collection's data is split across multiple physical shards via a shard key. Identify these by reading `src/packages/mongo-connection/src/mongo_connection.ts`: any field typed as `ShardAwareCollection<TSchema, TShardKeys>` is multi-shard. The second generic argument lists the shard-key fields.
-2. **Single-shard placement** — the collection lives on a non-default physical shard (no shard key, no chunks across shards, just placed on a different machine). Identify these from `src/packages/mongo-connection/src/shard_placement.ts` (`SHARD_PLACEMENT` map). Collections absent from that map live on the default shard.
+2. **Single-shard placement** — the collection lives on a non-default physical shard (no shard key, no chunks across shards, just placed on a different machine). In `mongo_connection.ts` these fields are typed `MovedCollection<TSchema, 'shard-N'>` (the shard tag is the second generic argument); the authoritative placement map is `SHARD_PLACEMENT` in `src/packages/mongo-connection/src/shard_placement.ts`. Collections absent from that map live on the default shard (`shard-0`).
 
 Read those two files to determine each collection's sharding kind. The prompt deliberately doesn't list specific collections — the set evolves over time, and the source files are authoritative.
 
@@ -132,7 +132,7 @@ Does **not** apply to test files (see intentional patterns above) or to single-s
 - **🟠 high** — `Acts2.aggregate([{ $lookup: { from: 'users', … } }, { $match: { actorId: { $nin: protectedIds } } }, { $sort: { … } }, { $limit: 20 } ])`. The `$lookup` runs on the full `Acts2` collection before the index-friendly `$match` / `$sort` / `$limit` narrow it down. Reorder so the `$match` → `$sort` → `$limit` precede the `$lookup`.
 - **🟠 high** — `$lookup: { from: 'actorBadges', let: { actorId: '$_id' }, pipeline: [{ $match: { $expr: { $eq: ['$actorId', '$$actorId'] } } }] }`. The `$expr` form prevents the planner from using the `{ actorId: 1 }` index on `actorBadges`. Switch to `{ from: 'actorBadges', localField: '_id', foreignField: 'actorId', as: '…' }`.
 - **🟡 medium** — `Users.findOne({ _id: id }, { projection: { username: 1 } })` with no generic. `user.username` types as `string` and reads fine, but `user.email` (not in the projection) also type-checks while being `undefined` at runtime. Use `findOne<Pick<User, '_id' | 'username'>>(…)` (or the `PickByDotNotation` helper for dotted keys).
-- **NOT a finding** — `Datasets.findOne({ userId: undefined, _id })` on a multi-shard collection. The explicit `undefined` is the documented opt-out pattern; the developer chose scatter-gather on purpose. See "Intentional patterns" in the Sharded collections section.
+- **NOT a finding** — `Act2Runs.findOne({ userId: undefined, _id })` on a multi-shard collection (shard key `userId, _id`). The explicit `undefined` is the documented opt-out pattern; the developer chose scatter-gather on purpose. See "Intentional patterns" in the Sharded collections section.
 
 ## Severity classification
 
