@@ -68,7 +68,7 @@ Two distinct kinds of "sharded" exist in this codebase:
 1. **Multi-shard collections** — the same collection's data is split across multiple physical shards via a shard key. Identify these by reading `src/packages/mongo-connection/src/mongo_connection.ts`: any field typed as `ShardAwareCollection<TSchema, TShardKeys>` is multi-shard. The second generic argument lists the shard-key fields.
 2. **Single-shard placement** — the collection lives on a non-default physical shard (no shard key, no chunks across shards, just placed on a different machine). In `mongo_connection.ts` these fields are typed `MovedCollection<TSchema, 'shard-N'>` (the shard tag is the second generic argument); the authoritative placement map is `SHARD_PLACEMENT` in `src/packages/mongo-connection/src/shard_placement.ts`. Collections absent from that map live on the default shard (`shard-0`).
 
-Read those two files to determine each collection's sharding kind. The prompt deliberately doesn't list specific collections — the set evolves over time, and the source files are authoritative.
+Read those two files to determine each collection's sharding kind. The set evolves over time, and the source files are authoritative.
 
 ### Intentional patterns — do NOT flag
 
@@ -99,7 +99,7 @@ On multi-shard collections, operations that would otherwise read straight from t
 Flag when these run on a multi-shard collection without `readConcern: 'available'`:
 - `.skip(N)` / `$skip: N`. Suggest cursor pagination on the sort key as the better alternative; `readConcern: 'available'` is a fallback. 🟠 high.
 - `.countDocuments(...)` on `.rawCollection` or on the underlying `Collection`. Note: `ShardAwareCollection.approximateCountDocuments()` already wraps `readConcern: 'available'` — **do not flag it**. 🟠 high.
-- `aggregate` ending in `$count` or with wide `$group` over many keys. 🟠 high.
+- `aggregate` ending in `$count` or with wide `$group` over many keys. 🟢 low.
 
 Does **not** apply to single-shard-placement collections — there are no orphans there.
 
