@@ -102,8 +102,11 @@ commit_parsers = [
 protect_breaking_commits = true
 # filter out the commits that are not matched by commit parsers
 filter_commits = false
-# regex for matching git tags
-tag_pattern = "v[0-9]+\\."
+# regex for matching git tags.
+# The "v" prefix is optional so that the default first version (e.g. "0.1.0"),
+# which git-cliff generates without a prefix when there are no existing tags,
+# still validates against the pattern.
+tag_pattern = "v?[0-9]+\\."
 # sort the tags topologically
 topo_order = false
 # sort the commits inside sections by oldest/newest order
