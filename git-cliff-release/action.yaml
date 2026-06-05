@@ -88,8 +88,10 @@ runs:
         elif [[ '${{ inputs.release_type }}' = auto ]]; then
           version_number=$(git-cliff --bumped-version | sed s/^v//)
 
-          # If there are no commits that increase semver, break
-          if [[ "$(git describe --tags --abbrev=0)" = "v${version_number}" ]]; then
+          # If there are no commits that increase semver, break.
+          # In a repo with no tags yet there is always something to release, and
+          # git describe would fail with a non-zero exit - guard against that.
+          if latest_tag=$(git describe --tags --abbrev=0 2> /dev/null) && [[ "$latest_tag" = "v${version_number}" ]]; then
             echo "::error title=Nothing to release::There were no commits that trigger a version bump since the last release"
             exit 1
           fi
