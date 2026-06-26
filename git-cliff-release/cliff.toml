@@ -21,7 +21,7 @@ body = """
 {% if version and extra.release_link %}\
     ## [{{ version | trim_start_matches(pat="v") }}]({{ extra.release_link }}) ({{ timestamp | date(format="%Y-%m-%d") }})
 {% elif extra.unreleased_version %}\
-    ## {{ extra.unreleased_version | trim_start_matches(pat="v") }} - **not yet released**
+    ## {{ extra.unreleased_version | trim_start_matches(pat="v") }}
 {% elif version %}
     ## {{ version | trim_start_matches(pat="v") }} ({{ timestamp | date(format="%Y-%m-%d") }})
 {% else %}\
