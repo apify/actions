@@ -64,7 +64,7 @@ runs:
       run: |
         echo "YEAR_MONTH=$(/bin/date -u "+%Y%m")" >> $GITHUB_OUTPUT
 
-    # Pre-compute the lockfile hash and store it as a step output. `actions/cache@v4`
+    # Pre-compute the lockfile hash and store it as a step output. `actions/cache`
     # re-evaluates `key:` in its post-step (cache-save) at job teardown, and on some
     # self-hosted/k8s runners the workspace is wiped before that runs — calling
     # `hashFiles('**/pnpm-lock.yaml')` from the post-step then fails the job after
@@ -76,7 +76,7 @@ runs:
       run: |
         echo "HASH=${{ hashFiles('**/pnpm-lock.yaml') }}" >> $GITHUB_OUTPUT
 
-    - uses: actions/cache@v4
+    - uses: actions/cache@v6.1.0
       name: Setup pnpm cache
       with:
         path: ${{ steps.pnpm-config.outputs.STORE_PATH }}
