@@ -35,6 +35,11 @@ type GitFileStatus = {
 
 const MODE_RW = 0o100644;
 
+// Some repositories use this action to commit a lot of files,
+// so the `git diff-index` output is larger than the default 1 MB buffer of `child_process.exec()`.
+// We need to increase the buffer size.
+const MAX_BUFFER_SIZE = 50 * 1024 * 1024; // 50 MB
+
 /**
  * Since the GitHub API only supports committing file contents, there is no way to specify executable files.
  * This function checks whether the staging area contains only files with valid (rw-r--r--) mode.
@@ -63,7 +68,7 @@ export async function status(options: Omit<childProcess.ExecOptions, 'encoding'>
         'HEAD',
     ];
 
-    const stagedFileStatuses = (await exec(cmd.join(' '), { encoding: 'utf8', ...options })).stdout.trim();
+    const stagedFileStatuses = (await exec(cmd.join(' '), { encoding: 'utf8', maxBuffer: MAX_BUFFER_SIZE, ...options })).stdout.trim();
 
     // see: man git-diff-index(1) - section RAW OUTPUT FORMAT
     return stagedFileStatuses.split('\n')
@@ -184,19 +189,19 @@ export async function main({ github, env, core }: { github: Octokit, env: Record
         if (PULL !== '') {
             const pullCmd = PULL === 'true' ? 'git pull' : `git pull ${PULL}`;
             core.info(`Executing "${pullCmd}" before committing (attempt ${attempt}/${maxAttempts})`);
-            const { stdout, stderr } = await exec(pullCmd, { encoding: 'utf8' });
+            const { stdout, stderr } = await exec(pullCmd, { encoding: 'utf8', maxBuffer: MAX_BUFFER_SIZE });
             core.debug(`pull stdout: ${stdout}`);
             core.debug(`pull stderr: ${stderr}`);
 
             // Check if there are any merge conflicts after the pull.
-            const unmerged = (await exec('git ls-files --unmerged', { encoding: 'utf8' })).stdout.trim();
+            const unmerged = (await exec('git ls-files --unmerged', { encoding: 'utf8', maxBuffer: MAX_BUFFER_SIZE })).stdout.trim();
             if (unmerged !== '') {
                 throw new Error(`"${pullCmd}" left unmerged paths in the index — refusing to commit files with merge conflicts:\n${unmerged}`);
             }
         }
 
         if (ADD !== '') {
-            await exec(`git add ${ADD}`, { encoding: 'utf8' });
+            await exec(`git add ${ADD}`, { encoding: 'utf8', maxBuffer: MAX_BUFFER_SIZE });
         }
 
         const expectedHeadOid = (await exec('git rev-parse HEAD', { encoding: 'utf8' })).stdout.trim();
