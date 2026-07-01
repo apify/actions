@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.1](https://github.com/apify/actions/compare/v1.3.0...v1.3.1) (2026-07-01)
+
+
+### Bug Fixes
+
+* **pnpm-install:** bump actions/cache to v6.1.0 to drop deprecated Node.js 20 runtime ([#29](https://github.com/apify/actions/issues/29)) ([7927d91](https://github.com/apify/actions/commit/7927d914a01bea7f52e771cdf9cf0a1630dfb8b4))
+
 ## [1.3.0](https://github.com/apify/actions/compare/v1.2.0...v1.3.0) (2026-06-05)
 
 
