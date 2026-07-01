@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.2](https://github.com/apify/actions/compare/v1.3.1...v1.3.2) (2026-07-01)
+
+
+### Bug Fixes
+
+* increase child process output buffer size in `signed-commit` to handle large diffs ([#31](https://github.com/apify/actions/issues/31)) ([49ee1be](https://github.com/apify/actions/commit/49ee1be7944c664917334d34760b863452a9bc6e))
+
 ## [1.3.1](https://github.com/apify/actions/compare/v1.3.0...v1.3.1) (2026-07-01)
 
 
