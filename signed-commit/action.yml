@@ -27,6 +27,10 @@ inputs:
     description: 'When non-empty, run `git pull <pull>` before staging and committing (e.g. `--rebase --autostash`). The special value `true` runs a plain `git pull` with no arguments. Defaults to an empty string (no pull).'
     default: ''
     required: false
+  pull-after-push:
+    description: 'Whether to pull the committed changes back into the local repo clone after pushing the commit. Defaults to `true`.'
+    default: true
+    required: false
   retries:
     description: 'How many times to retry the commit if it fails because the branch was updated by another author in the meantime. Requires `pull` to be non-empty (so the action can fetch the new HEAD between attempts). Defaults to `0` (no retries).'
     default: '0'
@@ -103,3 +107,8 @@ runs:
               core,
               env: process.env,
           });
+
+    - name: Pull committed changes
+      shell: bash
+      if: ${{ inputs.pull-after-push == 'true' && steps.commit.outputs.committed == 'true' }}
+      run: git pull origin "${{ inputs.branch }}"

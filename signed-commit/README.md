@@ -32,6 +32,7 @@ steps:
 - `create-branch` (optional, default `false`) — When `true`, the action pushes `HEAD` to `branch` as a new remote branch before committing. `branch` must be passed explicitly in this case.
 - `add` (optional, default `.`) — Paths passed to `git add` before committing. Defaults to `.` (everything). When set to an empty string, `git add` is skipped entirely.
 - `pull` (optional, default `''`) — When non-empty, run `git pull <pull>` before staging and committing (e.g. `--rebase --autostash`). The special value `true` runs a plain `git pull` with no arguments. Defaults to an empty string (no pull).
+- `pull-after-push` (optional, default `true`) — Whether to pull the committed changes back into the local repo clone after pushing the commit. Defaults to `true`.
 - `retries` (optional, default `0`) — How many times to retry the commit if it fails because the branch was updated by another author in the meantime. Requires `pull` to be non-empty (otherwise the action would just re-attempt against the same stale HEAD).
 
 ### Outputs
