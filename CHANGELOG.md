@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.0](https://github.com/apify/actions/compare/v1.3.2...v1.4.0) (2026-07-03)
+
+
+### Features
+
+* Add `pull-after-push` option to `signed-commit` action ([#33](https://github.com/apify/actions/issues/33)) ([ffde975](https://github.com/apify/actions/commit/ffde975f6775cf3e51cbf81effa3493ef54f4fb6))
+
 ## [1.3.2](https://github.com/apify/actions/compare/v1.3.1...v1.3.2) (2026-07-01)
 
 
