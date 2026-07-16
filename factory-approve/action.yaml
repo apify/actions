@@ -1,0 +1,118 @@
+name: Factory approve
+description: >-
+  Label-gated auto-approval for trivial PRs. Deterministic safety gates run first; only when every
+  gate passes does Claude judge the diff, and only a valid approve verdict makes the factory bot
+  account post an approving review. Fails closed everywhere, never requests changes, never merges.
+
+# Self-contained (dependency-free Node scripts) so it can be lifted into apify/actions for reuse.
+# All tuning lives in scripts/policy.mts.
+
+inputs:
+  pr-number:
+    description: Number of the pull request under review.
+    required: true
+  actor:
+    description: User whose action triggered the run (labeler or pusher); pass github.actor.
+    required: true
+  github-token:
+    description: Token used for reads and PR body updates (secrets.GITHUB_TOKEN).
+    required: true
+  factory-github-token:
+    description: Token of the bot account that posts approvals (needs repo + read:org).
+    required: true
+  anthropic-api-key:
+    description: Anthropic API key for the claude-code-action verdict step.
+    required: true
+
+outputs:
+  verdict:
+    description: Final verdict — approve, reject, or error.
+    value: ${{ steps.post.outputs.verdict }}
+
+runs:
+  using: composite
+  steps:
+    # Never fails the step: crashes are captured into gates.json and surface as an `error` verdict.
+    - name: Run static safety gates
+      id: prepare
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        FACTORY_GITHUB_TOKEN: ${{ inputs.factory-github-token }}
+      run: |
+        node "${{ github.action_path }}/scripts/prepare_review.mts" \
+          --pr "${{ inputs.pr-number }}" \
+          --repo "${{ github.repository }}" \
+          --actor "${{ inputs.actor }}" \
+          --out-dir "${{ runner.temp }}/factory-approve"
+
+    # The model only reads the checkout and writes its own verdict file; --disallowedTools blocks the
+    # GitHub tools so it cannot touch the PR, and posting happens only in post_verdict.mts. The Edit()
+    # rule (not Write()) governs the Write tool; the doubled slash marks an absolute path.
+    # continue-on-error so an LLM outage still reaches the post step (a missing verdict = error).
+    - name: Judge PR with Claude
+      if: steps.prepare.outputs.gates_passed == 'true'
+      continue-on-error: true
+      uses: anthropics/claude-code-action@v1
+      with:
+        anthropic_api_key: ${{ inputs.anthropic-api-key }}
+        github_token: ${{ inputs.github-token }}
+        show_full_output: true
+        prompt: ${{ steps.prepare.outputs.prompt }}
+        claude_args: |
+          --model ${{ steps.prepare.outputs.model }}
+          --max-turns ${{ steps.prepare.outputs.max_turns }}
+          --add-dir ${{ runner.temp }}/factory-approve
+          --allowedTools "Read,Glob,Grep,Edit(/${{ runner.temp }}/factory-approve/verdict.json)"
+          --disallowedTools "mcp__github,mcp__github_comment,mcp__github_inline_comment"
+
+    # Both reviewers must approve, so skip the second (more expensive) reviewer when the first did not
+    # approve. A missing or invalid first verdict counts as not-approved.
+    - name: Check first reviewer's verdict
+      id: first
+      if: steps.prepare.outputs.gates_passed == 'true' && steps.prepare.outputs.prompt2 != ''
+      shell: bash
+      env:
+        VERDICT_FILE: ${{ runner.temp }}/factory-approve/verdict.json
+      run: |
+        node -e '
+          const { readFileSync, appendFileSync } = require("node:fs");
+          let approved = false;
+          try { approved = JSON.parse(readFileSync(process.env.VERDICT_FILE, "utf-8")).verdict === "approve"; } catch {}
+          appendFileSync(process.env.GITHUB_OUTPUT, `approved=${approved}\n`);
+          console.log(`First reviewer approved: ${approved}`);
+        '
+
+    # Second independent reviewer with an adversarial stance; runs only if the first approved.
+    - name: Judge PR with Claude (second independent reviewer)
+      if: steps.prepare.outputs.gates_passed == 'true' && steps.prepare.outputs.prompt2 != '' && steps.first.outputs.approved == 'true'
+      continue-on-error: true
+      uses: anthropics/claude-code-action@v1
+      with:
+        anthropic_api_key: ${{ inputs.anthropic-api-key }}
+        github_token: ${{ inputs.github-token }}
+        show_full_output: true
+        prompt: ${{ steps.prepare.outputs.prompt2 }}
+        claude_args: |
+          --model ${{ steps.prepare.outputs.model2 }}
+          --max-turns ${{ steps.prepare.outputs.max_turns }}
+          --add-dir ${{ runner.temp }}/factory-approve
+          --allowedTools "Read,Glob,Grep,Edit(/${{ runner.temp }}/factory-approve/verdict2.json)"
+          --disallowedTools "mcp__github,mcp__github_comment,mcp__github_inline_comment"
+
+    # `!cancelled()` so the post step still runs when a reviewer step hard-fails (a missing verdict
+    # aggregates to `error`, which never approves), but is skipped when a newer commit supersedes this
+    # run (concurrency cancel) to avoid churning the PR-body comment.
+    - name: Post verdict
+      id: post
+      if: ${{ !cancelled() }}
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        FACTORY_GITHUB_TOKEN: ${{ inputs.factory-github-token }}
+        WORKFLOW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: |
+        node "${{ github.action_path }}/scripts/post_verdict.mts" \
+          --pr "${{ inputs.pr-number }}" \
+          --repo "${{ github.repository }}" \
+          --out-dir "${{ runner.temp }}/factory-approve"
