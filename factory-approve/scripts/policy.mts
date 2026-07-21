@@ -5,7 +5,9 @@
 export const policy = {
     label: 'factory-approve',
     factoryLogin: 'apify-factory',
-    baseBranch: 'develop',
+    // TEMPORARY (e2e test): the env override lets a sandbox PR that targets the unmerged workflow
+    // branch pass the base-branch gate (see apify/apify-core#29249). Remove before merging.
+    baseBranch: process.env.FACTORY_APPROVE_TEST_BASE_BRANCH ?? 'develop',
 
     maxChangedFiles: 5,
     maxChangedLines: 100,
