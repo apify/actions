@@ -56,8 +56,7 @@ exposes a `verdict` output (`approve` / `reject` / `error`).
 
 Defaults in `scripts/policy.mts` are the generic org-wide baseline: base `develop`, ≤5 files /
 ≤150 lines, JS/TS modifications plus added test files, Conventional Commit titles, authors from
-`apify/product-engineering`, reviewers `claude-sonnet-5` + `claude-opus-5`.
-
+`apify/product-engineering`, reviewers `claude-sonnet-5` + `claude-opus-4-8`.
 The optional `policy` input overrides them per repo: label, base branch, size and LLM limits,
 allowed extensions, title regex, author gate (org, teams, extra users), reviewer models (1–2),
 and the repo tier of `denyGlobs`; `denyGlobsAdd`, `riskyContentPatternsAdd`, and
