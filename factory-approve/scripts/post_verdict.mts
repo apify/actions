@@ -81,13 +81,13 @@ let finalReason = 'The review pipeline crashed before producing a result.';
 const reviewerVerdicts: ReviewerVerdict[] = [];
 
 if (gates) {
-    const failed = gates.staticChecks.filter((check: any) => !check.pass);
+    const failed = (gates.staticChecks ?? []).filter((check: any) => !check.pass);
     if (gates.crashMessage) {
         finalVerdict = 'error';
         finalReason = `The review pipeline crashed: ${gates.crashMessage}`;
     } else if (!gates.staticPassed) {
         finalVerdict = 'reject';
-        finalReason = `Static checks failed: ${failed.map((check: any) => check.id).join(', ')}.`;
+        finalReason = `Static checks failed: ${failed.length ? failed.map((check: any) => check.id).join(', ') : '(unknown)'}.`;
     } else {
         // Every reviewer must have produced a valid approval; a missing or malformed verdict from any
         // of them fails closed.
