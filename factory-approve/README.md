@@ -71,16 +71,14 @@ overrides in the workflow file:
       }
 ```
 
-Overrides can tighten anything, but can only loosen what is explicitly loosenable:
+The override surface:
 
-- **Replaceable**: `label`, `factoryLogin`, `baseBranch`, `allowedExtensions`,
-  `allowedAddedFileGlobs`, `prTitleRegex` (as a string), `authorGate.org`, `authorGate.teamSlugs`,
-  `authorGate.extraUsers`, `llm.reviewerModels` (1–2 models; the last is adversarial), and
-  `denyGlobs` — the repo tier only. A core tier of supply-chain paths (`.github/**`, dependency
+- **Replaceable**: `label`, `factoryLogin`, `baseBranch`, `maxChangedFiles`, `maxChangedLines`,
+  `allowedExtensions`, `allowedAddedFileGlobs`, `prTitleRegex` (as a string), `authorGate.org`,
+  `authorGate.teamSlugs`, `authorGate.extraUsers`, `llm.reviewerModels` (1–2 models; the last is
+  adversarial), the `llm` limits (`maxTurns`, `maxDiffChars`, `maxReasonChars`, `maxDetailsChars`),
+  and `denyGlobs` — the repo tier only. A core tier of supply-chain paths (`.github/**`, dependency
   manifests, lockfiles, env files, Dockerfiles, migrations, secrets) is always kept.
-- **Clamped**: `maxChangedFiles` (≤10), `maxChangedLines` (≤300), `llm.maxTurns` (≤50),
-  `llm.maxDiffChars` (≤120000), `llm.maxReasonChars` (≤600), `llm.maxDetailsChars` (≤4000).
-  Values above a ceiling are config errors, not silent clamps.
 - **Append-only**: `denyGlobsAdd`, `riskyContentPatternsAdd` (`{ id, description, regex }`, regex
   as a string), `authorGate.deniedUsersAdd`. The built-in patterns and denied accounts can never
   be removed, and `factoryLogin` is always denied.

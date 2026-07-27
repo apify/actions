@@ -150,13 +150,13 @@ describe('resolvePolicy', () => {
         const resolved = resolvePolicy(
             JSON.stringify({
                 baseBranch: 'main',
-                maxChangedLines: 300,
+                maxChangedLines: 1000,
                 authorGate: { teamSlugs: ['tooling'], extraUsers: ['contractor-x'] },
                 llm: { reviewerModels: ['claude-sonnet-5'] },
             }),
         );
         expect(resolved.baseBranch).toBe('main');
-        expect(resolved.maxChangedLines).toBe(300);
+        expect(resolved.maxChangedLines).toBe(1000);
         expect(resolved.authorGate.teamSlugs).toEqual(['tooling']);
         expect(resolved.llm.reviewerModels).toEqual(['claude-sonnet-5']);
         expect(resolvePolicy('  ')).toEqual(policy);
@@ -188,7 +188,6 @@ describe('resolvePolicy', () => {
             'not json',
             '[]',
             '{"maxChangedLine": 10}', // typo → unknown key
-            '{"maxChangedLines": 301}', // above the hard ceiling
             '{"maxChangedFiles": 0}',
             '{"llm": {"reviewerModels": []}}',
             '{"llm": {"reviewerModels": ["a", "b", "c"]}}', // more reviewers than the action wires

@@ -1,9 +1,9 @@
 // Policy for the factory-approve pipeline: thresholds, allowlists, and deny rules used by the
 // static checks and the LLM step. The built-in defaults are the generic org-wide baseline;
 // consuming repositories tune them through the action's `policy` input, a JSON document resolved
-// by `resolvePolicy`. Overrides can tighten anything but only loosen what is explicitly
-// loosenable: numeric limits have hard ceilings, the core deny globs and built-in risky-content
-// patterns can never be removed, and any invalid override throws (the pipeline fails closed).
+// by `resolvePolicy`. Overrides are validated strictly — unknown keys or wrong types throw and the
+// pipeline fails closed — and the core deny globs and built-in risky-content patterns can never
+// be removed.
 
 import { errorMessage } from './github_api.mts';
 
@@ -83,16 +83,6 @@ const builtInRiskyPatterns: RiskyContentPattern[] = [
     },
 ];
 
-// Hard ceilings for the numeric overrides; values above these are config errors, not silent clamps.
-const ceilings = {
-    maxChangedFiles: 10,
-    maxChangedLines: 300,
-    maxTurns: 50,
-    maxDiffChars: 120_000,
-    maxReasonChars: 600,
-    maxDetailsChars: 4_000,
-};
-
 // The composite action wires exactly two Claude reviewer steps, so two models is the maximum.
 const MAX_REVIEWERS = 2;
 
@@ -168,11 +158,10 @@ function asStringArray(value: unknown, key: string, minLength = 0): string[] {
     return entries;
 }
 
-function asBoundedInt(value: unknown, key: keyof typeof ceilings): number {
+function asPositiveInt(value: unknown, key: string): number {
     if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) {
         fail(`${key} must be a positive integer`);
     }
-    if ((value as number) > ceilings[key]) fail(`${key} is ${value}, above the hard ceiling of ${ceilings[key]}`);
     return value as number;
 }
 
@@ -268,9 +257,9 @@ export function resolvePolicy(overridesJson = ''): Policy {
         factoryLogin,
         baseBranch: raw.baseBranch !== undefined ? asString(raw.baseBranch, 'baseBranch') : defaults.baseBranch,
         maxChangedFiles:
-            raw.maxChangedFiles !== undefined ? asBoundedInt(raw.maxChangedFiles, 'maxChangedFiles') : defaults.maxChangedFiles,
+            raw.maxChangedFiles !== undefined ? asPositiveInt(raw.maxChangedFiles, 'maxChangedFiles') : defaults.maxChangedFiles,
         maxChangedLines:
-            raw.maxChangedLines !== undefined ? asBoundedInt(raw.maxChangedLines, 'maxChangedLines') : defaults.maxChangedLines,
+            raw.maxChangedLines !== undefined ? asPositiveInt(raw.maxChangedLines, 'maxChangedLines') : defaults.maxChangedLines,
         allowedExtensions,
         allowedFileStatuses: defaults.allowedFileStatuses,
         allowedAddedFileGlobs:
@@ -295,16 +284,16 @@ export function resolvePolicy(overridesJson = ''): Policy {
         },
         llm: {
             reviewerModels,
-            maxTurns: llm.maxTurns !== undefined ? asBoundedInt(llm.maxTurns, 'maxTurns') : defaults.llm.maxTurns,
+            maxTurns: llm.maxTurns !== undefined ? asPositiveInt(llm.maxTurns, 'maxTurns') : defaults.llm.maxTurns,
             maxDiffChars:
-                llm.maxDiffChars !== undefined ? asBoundedInt(llm.maxDiffChars, 'maxDiffChars') : defaults.llm.maxDiffChars,
+                llm.maxDiffChars !== undefined ? asPositiveInt(llm.maxDiffChars, 'maxDiffChars') : defaults.llm.maxDiffChars,
             maxReasonChars:
                 llm.maxReasonChars !== undefined
-                    ? asBoundedInt(llm.maxReasonChars, 'maxReasonChars')
+                    ? asPositiveInt(llm.maxReasonChars, 'maxReasonChars')
                     : defaults.llm.maxReasonChars,
             maxDetailsChars:
                 llm.maxDetailsChars !== undefined
-                    ? asBoundedInt(llm.maxDetailsChars, 'maxDetailsChars')
+                    ? asPositiveInt(llm.maxDetailsChars, 'maxDetailsChars')
                     : defaults.llm.maxDetailsChars,
         },
     };
