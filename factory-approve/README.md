@@ -77,10 +77,10 @@ deliberately not overridable.
 
 ## Backtest
 
-Replay the whole pipeline over recent PRs without posting anything (requires the `claude` CLI,
+Replay the whole pipeline over recent human PRs (requires the `claude` CLI,
 authenticated, run from a base-branch checkout):
 
 ```bash
-GITHUB_TOKEN=… FACTORY_GITHUB_TOKEN=… \
-  node backtest/backtest.mts --repo apify/apify-core --last 200 --policy overrides.json
+GITHUB_TOKEN=gh auth token \
+node backtest/backtest.mts --repo apify/apify-core --last 200 [--policy overrides.json] [--output results.jsonl]
 ```

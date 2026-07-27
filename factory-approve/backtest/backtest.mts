@@ -4,8 +4,8 @@
 // prints how many would have been auto-approved.
 //
 // Usage: node backtest.mts [--repo owner/repo] [--last 200] [--policy overrides.json] [--output results.jsonl]
-// Env: GITHUB_TOKEN (required); FACTORY_GITHUB_TOKEN (recommended — without it the engineer gate
-// fails for everyone). Needs the `claude` CLI installed and authenticated; run from a checkout of the
+// Env: GITHUB_TOKEN (required);
+// Needs the `claude` CLI installed and authenticated; run from a checkout of the
 // base branch so Read/Grep context matches CI. `--policy` takes the same JSON document a repo would
 // pass to the action's `policy` input, so overrides can be replayed before enabling them.
 
@@ -98,7 +98,7 @@ await forEachWithConcurrency(pulls, CONCURRENCY, async (pull) => {
             actor: null,
             backtest: true,
             policy,
-            tokens: { github: githubToken, factory: process.env.FACTORY_GITHUB_TOKEN },
+            tokens: { github: githubToken, factory: githubToken },
         });
         if (gates.staticPassed) staticPassCount += 1;
         for (const check of gates.staticChecks) {

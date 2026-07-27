@@ -104,7 +104,7 @@ const defaults = {
     denyGlobs: [] as string[],
 
     // Conventional Commit (scope optional); breaking changes (`!`) are rejected separately.
-    prTitleRegex: /^(feat|fix|chore|docs|style|refactor|perf|test|ci|build|revert)(\([^()]+\))?: .+/,
+    prTitleRegex: /^(feat|fix|chore|copy|docs|style|refactor|perf|test|tests|ci|build|revert|migration)(\([^()]+\))?: .+/,
 
     // Both the PR author and the triggering user must be active members of one of `teamSlugs`
     // (checked with the factory token's `read:org`), or in `extraUsers`. `deniedUsers` are never allowed.
@@ -119,7 +119,7 @@ const defaults = {
         // One model per reviewer; array length is the reviewer count. All must approve and the
         // last is adversarial. Different models on purpose: same-model jurors share blind spots,
         // and the cheaper model runs first so a rejection short-circuits the expensive one.
-        reviewerModels: ['claude-sonnet-5', 'claude-opus-5'],
+        reviewerModels: ['claude-sonnet-5', 'claude-opus-4-8'],
         maxTurns: 30,
         // Fail closed if the assembled diff exceeds this (sized for a 150-line PR with long lines).
         maxDiffChars: 80_000,
