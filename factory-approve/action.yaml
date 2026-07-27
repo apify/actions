@@ -15,7 +15,7 @@ inputs:
     description: User whose action triggered the run (labeler or pusher); pass github.actor.
     required: true
   github-token:
-    description: Token used for reads and PR body updates (secrets.GITHUB_TOKEN).
+    description: Token used for GitHub API reads (secrets.GITHUB_TOKEN).
     required: true
   factory-github-token:
     description: Token of the bot account that posts approvals (needs repo + read:org).
@@ -116,7 +116,6 @@ runs:
       if: ${{ !cancelled() }}
       shell: bash
       env:
-        GITHUB_TOKEN: ${{ inputs.github-token }}
         FACTORY_GITHUB_TOKEN: ${{ inputs.factory-github-token }}
         POLICY_OVERRIDES: ${{ inputs.policy }}
         WORKFLOW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

@@ -6,8 +6,8 @@
 // bot never touches the label, never requests changes, never merges, and never edits the PR description.
 //
 // Usage: node post_verdict.mts --pr <number> [--repo owner/repo] [--out-dir dir]
-// Env: GITHUB_TOKEN (legacy PR body cleanup), FACTORY_GITHUB_TOKEN (reviews/comments),
-// WORKFLOW_RUN_URL (optional), POLICY_OVERRIDES (optional, must match the prepare step's).
+// Env: FACTORY_GITHUB_TOKEN (reviews/comments), WORKFLOW_RUN_URL (optional), POLICY_OVERRIDES
+// (optional, must match the prepare step's).
 
 import { appendFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -19,7 +19,6 @@ import {
     dismissApprovalsBy,
     errorMessage,
     minimizeOutdatedReports,
-    removePrBodyMessage,
 } from './github_api.mts';
 import { fingerprintMarker } from './fingerprint.mts';
 import { resolvePolicy, type Policy } from './policy.mts';
@@ -43,10 +42,9 @@ if (!values.repo) {
     console.error('--repo (or the GITHUB_REPOSITORY env var) is required');
     process.exit(2);
 }
-const githubToken = process.env.GITHUB_TOKEN;
 const factoryToken = process.env.FACTORY_GITHUB_TOKEN;
-if (!githubToken || !factoryToken) {
-    console.error('GITHUB_TOKEN and FACTORY_GITHUB_TOKEN are required');
+if (!factoryToken) {
+    console.error('FACTORY_GITHUB_TOKEN is required');
     process.exit(2);
 }
 
@@ -124,9 +122,6 @@ const memoMarker =
     gates?.fingerprint && gates.staticPassed && (finalVerdict === 'approve' || finalVerdict === 'reject')
         ? `\n\n${fingerprintMarker(finalVerdict, gates.fingerprint)}`
         : '';
-
-// Earlier versions of this action wrote the outcome into the PR description; drop any such block.
-await removePrBodyMessage(repo, prNumber, { label: 'FACTORY-APPROVE', token: githubToken });
 
 // Reports from earlier runs describe superseded commits — fold them (never edit or delete them).
 const folded = await minimizeOutdatedReports(repo, prNumber, { marker: REPORT_MARKER, token: factoryToken });

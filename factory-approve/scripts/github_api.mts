@@ -125,27 +125,6 @@ export async function getFileContentAtRef(
     return Buffer.from(response.content, 'base64').toString('utf-8');
 }
 
-const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-// Migration cleanup: removes the labelled PR-BOT block an earlier version of this action wrote into
-// the PR body (same HTML markers as apify-core's `scripts/edit_pull_request_body.js`).
-export async function removePrBodyMessage(
-    repoFullName: string,
-    prNumber: number,
-    { label, token }: { label: string; token: string },
-): Promise<void> {
-    const pr = await githubRequest(`/repos/${repoFullName}/pulls/${prNumber}`, { token });
-    const startMarker = `<!-- PR-BOT-MESSAGE-START ${label} -->`;
-    const endMarker = `<!-- PR-BOT-MESSAGE-END ${label} -->`;
-
-    const body = pr.body || '';
-    // GitHub uses Windows-style line endings when the PR description is edited in the UI.
-    const oldMessageRegex = new RegExp(`\r?\n${escapeRegExp(startMarker)}.*?${escapeRegExp(endMarker)}\r?\n`, 'gs');
-    const cleaned = body.replace(oldMessageRegex, '');
-    if (cleaned === body) return;
-    await githubRequest(`/repos/${repoFullName}/pulls/${prNumber}`, { token, method: 'PATCH', body: { body: cleaned } });
-}
-
 async function githubGraphql(query: string, variables: Record<string, any>, token: string): Promise<any> {
     const response = await fetch('https://api.github.com/graphql', {
         method: 'POST',
