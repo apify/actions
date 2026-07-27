@@ -81,6 +81,5 @@ Replay the whole pipeline over recent human PRs (requires the `claude` CLI,
 authenticated, run from a base-branch checkout):
 
 ```bash
-GITHUB_TOKEN=gh auth token \
+GITHUB_TOKEN="$(gh auth token)" \
 node backtest/backtest.mts --repo apify/apify-core --last 200 [--policy overrides.json] [--output results.jsonl]
-```
