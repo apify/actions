@@ -40,9 +40,10 @@ never edits the PR description.
    Commit title.
 2. **LLM verdict** (`anthropics/claude-code-action`, run twice — two independent reviewers,
    the second adversarial; both must approve). Each judges whether the change needs a human
-   (databases, security, money, config, public contracts, infra, privacy) and is free of
-   correctness bugs, then writes a strict `{"verdict","reason"}` file. The model can only read
-   the code and write its verdict — it cannot touch the PR.
+   (databases, security, money, config, public contracts, infra, privacy), is free of
+   correctness bugs, and follows the conventions of the surrounding code (naming, formatting,
+   established patterns), then writes a strict `{"verdict","reason"}` file. The model can only
+   read the code and write its verdict — it cannot touch the PR.
 3. **Post** (`scripts/post_verdict.mts`) — the only place GitHub is written to. Approves as
    `apify-factory` (with a separate token), or dismisses stale approvals and posts the report
    as a new comment (folding older report comments as outdated). Fails closed: any crash,

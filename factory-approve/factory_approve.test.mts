@@ -511,6 +511,7 @@ describe('buildPromptText', () => {
             expect(prompt).toContain(domain);
         }
         expect(prompt).toContain('Correctness showstoppers');
+        expect(prompt).toContain('conventions of the surrounding code');
     });
 
     it('fails closed on an oversized diff', () => {
