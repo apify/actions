@@ -103,7 +103,7 @@ const defaults = {
     baseBranch: 'develop',
 
     maxChangedFiles: 5,
-    maxChangedLines: 100,
+    maxChangedLines: 150,
 
     // No `.json`: dependency manifests and configs need a human.
     allowedExtensions: ['.js', '.jsx', '.mjs', '.cjs', '.ts', '.tsx'],
@@ -128,11 +128,12 @@ const defaults = {
 
     llm: {
         // One model per reviewer; array length is the reviewer count. All must approve and the
-        // last is adversarial. Different models on purpose: same-model jurors share blind spots.
-        reviewerModels: ['claude-sonnet-5', 'claude-opus-4-8'],
+        // last is adversarial. Different models on purpose: same-model jurors share blind spots
+        // and the first mode is cheaper, so the second is a more expensive model to catch what the first might miss.
+        reviewerModels: ['claude-sonnet-5', 'claude-opus-5'],
         maxTurns: 30,
         // Fail closed if the assembled diff exceeds this (sized for a 100-line PR with long lines).
-        maxDiffChars: 60_000,
+        maxDiffChars: 80_000,
         maxReasonChars: 300,
         // Longer markdown explanation reviewers attach to rejections, shown collapsed in the report.
         maxDetailsChars: 1_500,
