@@ -4,7 +4,6 @@
 // by `resolvePolicy`. Overrides can tighten anything but only loosen what is explicitly
 // loosenable: numeric limits have hard ceilings, the core deny globs and built-in risky-content
 // patterns can never be removed, and any invalid override throws (the pipeline fails closed).
-// Full design: docs/policy-overrides-spec.md.
 
 import { errorMessage } from './github_api.mts';
 

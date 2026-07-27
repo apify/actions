@@ -89,7 +89,7 @@ Everything else — the static check set, unanimity, fail-closed semantics, the 
 comment lifecycle — is not configurable. Unknown keys, wrong types, or out-of-range values fail
 closed: the run reports "could not finish" and approves nothing, at zero LLM cost. Changing
 overrides also changes the review fingerprint, so previously memoized verdicts get a fresh
-review. Full design rationale: [docs/policy-overrides-spec.md](docs/policy-overrides-spec.md).
+review.
 
 The reviewer's instructions (what needs a human vs. what's approvable) live in
 `scripts/prompt.mts` and are deliberately not overridable.
