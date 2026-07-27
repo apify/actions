@@ -36,7 +36,7 @@ never edits the PR description.
 
 1. **Static gates** (`scripts/prepare_review.mts`) — all must pass or the PR is rejected
    without calling Claude: trusted author + trigger, open & mergeable, targets `develop`,
-   ≤5 files / ≤100 lines, JS/TS only, no denied paths, no risky added lines, Conventional
+   ≤5 files / ≤150 lines, JS/TS only, no denied paths, no risky added lines, Conventional
    Commit title.
 2. **LLM verdict** (`anthropics/claude-code-action`, run twice — two independent reviewers,
    the second adversarial; both must approve). Each judges whether the change needs a human
@@ -52,9 +52,9 @@ never edits the PR description.
 ## Configure
 
 The built-in policy (`scripts/policy.mts`) is the generic org-wide baseline: base `develop`,
-≤5 files / ≤100 lines, `.js`/`.ts` only (no `.json`), modifications plus added test files,
+≤5 files / ≤150 lines, `.js`/`.ts` only (no `.json`), modifications plus added test files,
 Conventional Commit titles, authors and actors from `apify/product-engineering`, and two
-reviewers (`claude-sonnet-5` + `claude-opus-4-8`, the second adversarial).
+reviewers (`claude-sonnet-5` + `claude-opus-5`, the second adversarial).
 
 A consuming repository tunes it through the optional `policy` input — a JSON document of
 overrides in the workflow file:

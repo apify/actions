@@ -42,7 +42,7 @@ One new **optional** action input, `policy`, containing a JSON document of overr
     policy: |
       {
         "baseBranch": "main",
-        "maxChangedLines": 150,
+        "maxChangedLines": 200,
         "denyGlobs": ["infra/**", "**/billing/**"],
         "denyGlobsAdd": ["docs/legal/**"],
         "authorGate": { "teamSlugs": ["tooling"] }
@@ -80,16 +80,16 @@ One new **optional** action input, `policy`, containing a JSON document of overr
 | `authorGate.org` | `apify` | non-empty |
 | `authorGate.teamSlugs` | `['product-engineering']` | non-empty array |
 | `authorGate.extraUsers` | `[]` | array of logins (see decision point 4) |
-| `llm.reviewerModels` | `claude-sonnet-5`, `claude-opus-4-8` | 1–2 entries; length = reviewer count; the second reviewer is always adversarial (the composite action wires exactly two Claude steps, so two is the hard maximum) |
+| `llm.reviewerModels` | `claude-sonnet-5`, `claude-opus-5` | 1–2 entries; length = reviewer count; the second reviewer is always adversarial (the composite action wires exactly two Claude steps, so two is the hard maximum) |
 
 ### Clamped numerics (hard ceilings; exceeding them is a config error, not a silent clamp)
 
 | Key | Default | Ceiling |
 | --- | --- | --- |
 | `maxChangedFiles` | 5 | 10 |
-| `maxChangedLines` | 100 | 300 |
+| `maxChangedLines` | 150 | 300 |
 | `llm.maxTurns` | 30 | 50 |
-| `llm.maxDiffChars` | 60 000 | 120 000 |
+| `llm.maxDiffChars` | 80 000 | 120 000 |
 | `llm.maxReasonChars` | 300 | 600 |
 | `llm.maxDetailsChars` | 1 500 | 4 000 |
 

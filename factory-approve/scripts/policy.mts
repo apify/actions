@@ -128,11 +128,11 @@ const defaults = {
 
     llm: {
         // One model per reviewer; array length is the reviewer count. All must approve and the
-        // last is adversarial. Different models on purpose: same-model jurors share blind spots
-        // and the first mode is cheaper, so the second is a more expensive model to catch what the first might miss.
+        // last is adversarial. Different models on purpose: same-model jurors share blind spots,
+        // and the cheaper model runs first so a rejection short-circuits the expensive one.
         reviewerModels: ['claude-sonnet-5', 'claude-opus-5'],
         maxTurns: 30,
-        // Fail closed if the assembled diff exceeds this (sized for a 100-line PR with long lines).
+        // Fail closed if the assembled diff exceeds this (sized for a 150-line PR with long lines).
         maxDiffChars: 80_000,
         maxReasonChars: 300,
         // Longer markdown explanation reviewers attach to rejections, shown collapsed in the report.
