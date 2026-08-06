@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { runClaudeCliVerdict } from './backtest/claude_cli.mts';
-import { addedLines, createAllowedUserResolver, runStaticChecks, staticChecks } from './scripts/checks.mts';
+import { addedLines, createAllowedUserResolver, hasLabel, runStaticChecks, staticChecks } from './scripts/checks.mts';
 import { writeHeadFiles } from './scripts/context_files.mts';
 import {
     activeHumanReviews,
@@ -116,6 +116,17 @@ describe('runStaticChecks', () => {
             makeContext({ backtest: true, actor: null, pr: { state: 'closed', merged: true, mergeable: null } }),
         );
         expect(failedIds(results)).toEqual([]);
+    });
+});
+
+describe('hasLabel', () => {
+    it('matches the live PR labels exactly and tolerates missing or malformed shapes', () => {
+        expect(hasLabel({ labels: [{ name: 'bug' }, { name: 'factory-approve' }] }, 'factory-approve')).toBe(true);
+        expect(hasLabel({ labels: [{ name: 'Factory-Approve' }] }, 'factory-approve')).toBe(false);
+        expect(hasLabel({ labels: [] }, 'factory-approve')).toBe(false);
+        expect(hasLabel({}, 'factory-approve')).toBe(false);
+        expect(hasLabel(null, 'factory-approve')).toBe(false);
+        expect(hasLabel({ labels: [null, { id: 1 }] }, 'factory-approve')).toBe(false);
     });
 });
 

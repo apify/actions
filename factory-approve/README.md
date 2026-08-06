@@ -8,11 +8,14 @@ post an approving review. Everything fails closed — it never requests changes 
 ## How to use
 
 Add the `factory-approve` label to a PR (drafts wait until ready). The label is a human opt-in
-flag the bot never touches: while it's on, every push is re-reviewed; remove it to opt out.
+flag the bot never touches: while it's on, every push is re-reviewed; remove it to opt out — the
+pipeline stands down and any active factory approval is dismissed with it, so an approval can
+never outlive the label that authorized it.
 
 - Approve → the factory account posts an approving review locked to the reviewed commit.
 - Reject / error → the report lands as a new PR comment with a collapsed details section, any
   stale factory approval is dismissed, and older report comments are folded as outdated.
+- Label removed → nothing is posted, but any active factory approval is dismissed.
 
 A run stands down silently — no review, no comment, no cost — when a human review is already
 active, or when the content is unchanged since the last factory verdict (each verdict embeds a
@@ -36,8 +39,9 @@ fingerprint of the title + diff, so develop-syncs, rebases, and empty pushes ski
 ```yaml
 on:
   pull_request_target: # runs the pipeline from the default branch, out of the PR's reach
-    types: [labeled, synchronize, opened, reopened, ready_for_review]
-# ... label guard, base-branch checkout, Node setup ...
+    types: [labeled, unlabeled, synchronize, opened, reopened, ready_for_review]
+# ... label guard (must let `unlabeled` runs through, even on drafts, so the approval is
+# dismissed when the label is removed), base-branch checkout, Node setup ...
 - uses: apify/actions/factory-approve@main
   with:
     pr-number: ${{ github.event.pull_request.number }}

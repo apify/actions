@@ -2,7 +2,8 @@
 // evidence (stage 1) and the verdict files Claude wrote (stage 2), derives the final verdict
 // deterministically, and posts it: approve → approving review as the factory account, locked to the
 // reviewed head SHA; reject/error → any stale factory approval is dismissed and the report is posted
-// as a NEW comment, with earlier report comments folded as outdated (never edited or deleted). The
+// as a NEW comment, with earlier report comments folded as outdated (never edited or deleted);
+// label absent → nothing is posted, but any active factory approval is dismissed. The
 // bot never touches the label, never requests changes, never merges, and never edits the PR description.
 //
 // Usage: node post_verdict.mts --pr <number> [--repo owner/repo] [--out-dir dir]
@@ -68,6 +69,21 @@ try {
     gates = JSON.parse(readFileSync(join(outDir, 'gates.json'), 'utf-8'));
 } catch (error) {
     console.warn(`Could not read gates.json: ${errorMessage(error)}`);
+}
+
+// The factory label was absent when the gates ran (typically removed): post nothing, fold nothing,
+// but withdraw any active factory approval. The label is the mandate for the approval, and the
+// approval must not outlive it — otherwise removing the label would disable the pipeline while its
+// approval keeps counting toward required reviews for whatever is pushed afterwards.
+if (gates?.dismissReason) {
+    console.log(`Standing down on PR #${prNumber}: ${gates.dismissReason}`);
+    const withdrawn = await dismissApprovalsBy(repo, prNumber, {
+        login: policy.factoryLogin,
+        message: 'Factory-approve label removed: the approval no longer has a mandate.',
+        token: factoryToken,
+    });
+    if (withdrawn > 0) console.log(`Dismissed ${withdrawn} factory approval(s).`);
+    process.exit(0);
 }
 
 // A skip is a full no-op: nothing is reviewed, posted, dismissed, or folded.

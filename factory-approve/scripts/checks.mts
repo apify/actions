@@ -21,6 +21,13 @@ export type AllowedUserResolver = (username: string) => Promise<{ allowed: boole
 
 type CheckOutcome = { pass: boolean; details: string };
 
+// True when the PR currently carries the given label. The label is the standing opt-in for the
+// pipeline: presence is re-checked from the live PR on every run (not from the triggering event),
+// so a removal is honored even when it raced with an in-flight run.
+export function hasLabel(pr: any, label: string): boolean {
+    return ((pr?.labels ?? []) as any[]).some((entry) => entry?.name === label);
+}
+
 // Added lines of a unified diff, without the leading `+`. The diff file header is `+++ ` (trailing
 // space) — an added line whose own content starts with `++` (e.g. `++counter`) must still be scanned.
 export function addedLines(patch: string): string[] {

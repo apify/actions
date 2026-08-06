@@ -13,7 +13,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 
-import { createAllowedUserResolver, runStaticChecks, type CheckResult } from './checks.mts';
+import { createAllowedUserResolver, hasLabel, runStaticChecks, type CheckResult } from './checks.mts';
 import { writeHeadFiles } from './context_files.mts';
 import { activeHumanReviews, computeReviewFingerprint, findPriorVerdict, stableStringify } from './fingerprint.mts';
 import {
@@ -46,6 +46,11 @@ function baseGates({ repo, prNumber, actor }: { repo: string; prNumber: number; 
         // Non-empty when this run should do nothing at all (no LLM, no posting): a human review is
         // active, or the diff is unchanged since the last factory verdict.
         skipReason: '',
+        // Non-empty when the factory label is absent from the PR: nothing is reviewed or posted,
+        // but any active factory approval is dismissed — an approval must never outlive the label
+        // that authorized it (otherwise removing the label would switch the pipeline off while its
+        // approval keeps counting toward required reviews for whatever is pushed next).
+        dismissReason: '',
         // Fingerprint of the reviewed content; post_verdict embeds it in the verdict it posts.
         fingerprint: '',
     };
@@ -165,11 +170,16 @@ if (isMainModule) {
         gates = result.gates;
         gates.policy = JSON.parse(stableStringify(policy));
 
-        // Stand down entirely when a human has reviewed: an approval means the factory has nothing
-        // to add, changes-requested means a human owns the review conversation now. Checked before
-        // the gates outcome so even a would-be rejection stays silent.
+        // Withdraw and stand down when the label is absent (typically an `unlabeled` run, but every
+        // run re-checks the live PR). Checked before everything else — the dismissal must happen
+        // even when a human review is active or the gates would fail.
         const humans = activeHumanReviews({ pr: result.pr, reviews: result.reviews, factoryLogin: policy.factoryLogin });
-        if (humans.size > 0) {
+        if (!hasLabel(result.pr, policy.label)) {
+            gates.dismissReason = `label "${policy.label}" is not present on the PR`;
+        } else if (humans.size > 0) {
+            // Stand down entirely when a human has reviewed: an approval means the factory has nothing
+            // to add, changes-requested means a human owns the review conversation now. Checked before
+            // the gates outcome so even a would-be rejection stays silent.
             const states = [...humans.entries()].map(([login, state]) => `${login}: ${state}`);
             gates.skipReason = `human review active (${states.join(', ')})`;
         } else if (gates.staticPassed) {
@@ -184,7 +194,7 @@ if (isMainModule) {
             }
         }
 
-        if (gates.staticPassed && !gates.skipReason) {
+        if (gates.staticPassed && !gates.skipReason && !gates.dismissReason) {
             const context = await buildReviewerContext({
                 repo: values.repo,
                 pr: result.pr,
@@ -224,7 +234,9 @@ if (isMainModule) {
     for (const check of gates.staticChecks) {
         console.log(`  [${check.pass ? 'pass' : 'FAIL'}] ${check.id}: ${check.details}`);
     }
-    if (gates.skipReason) {
+    if (gates.dismissReason) {
+        console.log(`STAND DOWN — ${gates.dismissReason}. Factory approvals will be dismissed; nothing else posted.`);
+    } else if (gates.skipReason) {
         console.log(`SKIP — ${gates.skipReason}. Nothing will be reviewed or posted.`);
     } else {
         console.log(
