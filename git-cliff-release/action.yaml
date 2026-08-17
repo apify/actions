@@ -28,6 +28,13 @@ inputs:
     required: false
     type: string
     default: ""
+  changelog_artifact_name:
+    description: |
+      Name of the artifact the generated changelog is uploaded as. The artifact holds a single file named
+      CHANGELOG.md. Set this when a single workflow run calls this action more than once.
+    required: false
+    type: string
+    default: git-cliff-changelog
   token:
     description: Github token to be used by github CLI
     required: false
@@ -52,8 +59,13 @@ outputs:
     description: Release notes for the new release
     value: ${{ steps.release_notes.outputs.release_notes }}
   changelog:
-    description: The complete changelog
+    description: |
+      The complete changelog. Only usable while it stays below 128 KiB - passing a larger value to another
+      action's input makes that action fail to start. Prefer the changelog_artifact_name output.
     value: ${{ steps.changelog.outputs.changelog }}
+  changelog_artifact_name:
+    description: Name of the artifact holding the generated changelog as a single CHANGELOG.md file
+    value: ${{ inputs.changelog_artifact_name }}
 runs:
   using: composite
   steps:
@@ -173,9 +185,23 @@ runs:
 
         sed -i '$a\' $out_file # Make sure there is a newline at the end of the output file
 
+        # Stage the changelog for the artifact upload. Consumers that receive the changelog through an
+        # action or workflow input are limited to 128 KiB - inputs are passed as environment variables and
+        # the kernel refuses to start a process with a longer one. The artifact has no such limit.
+        mkdir -p $RUNNER_TEMP/git-cliff-changelog
+        cp $out_file $RUNNER_TEMP/git-cliff-changelog/CHANGELOG.md
+
         echo 'changelog<<EOF' >> $GITHUB_OUTPUT
         cat $out_file >> $GITHUB_OUTPUT
         echo 'EOF' >> $GITHUB_OUTPUT
+    - name: Upload changelog artifact
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ inputs.changelog_artifact_name }}
+        path: ${{ runner.temp }}/git-cliff-changelog/CHANGELOG.md
+        if-no-files-found: error
+        retention-days: 7 # Enough to keep a later re-run of the failed jobs working.
+        overwrite: true
     - name: Clean up
       shell: bash
       env:
