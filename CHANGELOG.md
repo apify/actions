@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.1](https://github.com/apify/actions/compare/v1.4.0...v1.4.1) (2026-08-17)
+
+
+### Bug Fixes
+
+* **git-cliff-release:** upload the generated changelog as an artifact ([#36](https://github.com/apify/actions/issues/36)) ([8a3e3b2](https://github.com/apify/actions/commit/8a3e3b29cbf75fada944de8d93dc0bfa72a25a5c))
+
 ## [1.4.0](https://github.com/apify/actions/compare/v1.3.2...v1.4.0) (2026-07-03)
 
 
