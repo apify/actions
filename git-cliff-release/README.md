@@ -22,7 +22,7 @@ This action uses conventional commit history to determine the recommended versio
 - **release_notes**: Release notes for the new release
 - **changelog**: The complete changelog
 - **changelog_artifact_name**: Name of the artifact holding the generated changelog
-- **prerelease_id**: The `prerelease_id` input, echoed for convenience
+- **prerelease_id**: The `prerelease_id` input, echoed for convenience - it doubles as the npm dist-tag. Empty for stable releases, so it cannot tag one as a pre-release.
 - **prerelease_number**: One more than the highest pre-release number already published for `version_number`
 - **prerelease_version**: Semver-flavoured pre-release version for npm and crates.io, e.g. `1.2.4-beta.7`
 - **prerelease_version_pep440**: PEP 440-flavoured pre-release version for PyPI, e.g. `1.2.4b7`

@@ -76,8 +76,10 @@ outputs:
     description: Tag name for the new release (with a leading "v")
     value: ${{ steps.version_number.outputs.tag_name }}
   prerelease_id:
-    description: The prerelease_id input, echoed for convenience
-    value: ${{ inputs.prerelease_id }}
+    description: |
+      The prerelease_id input, echoed for convenience - it doubles as the npm dist-tag. Empty under the
+      same conditions as prerelease_number, so it cannot tag a stable release as a pre-release.
+    value: ${{ steps.prerelease.outputs.prerelease_id }}
   prerelease_number:
     description: |
       One more than the highest pre-release number already published for version_number under

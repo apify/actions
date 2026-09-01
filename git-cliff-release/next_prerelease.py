@@ -21,8 +21,8 @@ PEP440_SPELLINGS = {
 }
 
 
-def fetch_json(url: str) -> dict[str, Any] | None:
-    request = urllib.request.Request(url, headers={'User-Agent': USER_AGENT, 'Accept': 'application/json'})  # noqa: S310
+def fetch_json(url: str, accept: str = 'application/json') -> dict[str, Any] | None:
+    request = urllib.request.Request(url, headers={'User-Agent': USER_AGENT, 'Accept': accept})  # noqa: S310
 
     try:
         with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310
@@ -41,15 +41,30 @@ def npm_versions(package: str) -> list[str]:
 
 
 def pypi_versions(package: str) -> list[str]:
+    # The /pypi/<name>/json endpoint's `releases` key is deprecated in favour of the PEP 691 index,
+    # which needs this Accept header or it serves HTML. `versions` is PEP 700 and includes yanks.
     name = urllib.parse.quote(package)
-    payload = fetch_json(f'https://pypi.org/pypi/{name}/json')
-    return list((payload or {}).get('releases', {}))
+    payload = fetch_json(f'https://pypi.org/simple/{name}/', 'application/vnd.pypi.simple.v1+json')
+    return list((payload or {}).get('versions', []))
 
 
 def crates_versions(package: str) -> list[str]:
+    # One request returns every version today, but the endpoint reserves the right to paginate and
+    # orders semver-descending, so not following `next_page` would silently truncate at the newest.
     name = urllib.parse.quote(package)
-    payload = fetch_json(f'https://crates.io/api/v1/crates/{name}/versions')
-    return [version['num'] for version in (payload or {}).get('versions', [])]
+    base_url = f'https://crates.io/api/v1/crates/{name}/versions'
+    versions: list[str] = []
+    query = ''
+
+    while True:
+        payload = fetch_json(f'{base_url}{query}')
+        if payload is None:
+            return versions
+
+        versions += [version['num'] for version in payload.get('versions', [])]
+        query = (payload.get('meta') or {}).get('next_page')
+        if not query:
+            return versions
 
 
 def semver_pattern(base_version: str, prerelease_id: str) -> re.Pattern[str]:
@@ -92,6 +107,7 @@ if __name__ == '__main__':
     numbers = [int(match['number']) for version in versions if (match := pattern.fullmatch(version))]
     number = max(numbers, default=-1) + 1
 
+    print(f'prerelease_id={args.prerelease_id}')
     print(f'prerelease_number={number}')
     print(f'prerelease_version={args.base_version}-{args.prerelease_id}.{number}')
     print(f'prerelease_version_pep440={args.base_version}{PEP440_SPELLINGS[args.prerelease_id][0]}{number}')
