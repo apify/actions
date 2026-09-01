@@ -18,6 +18,26 @@ inputs:
     required: false
     type: string
     default: ""
+  prerelease_id:
+    description: |
+      Pre-release identifier used when release_type is "prerelease" - one of "alpha", "beta" or "rc".
+      Doubles as the npm dist-tag in most setups.
+    required: false
+    type: string
+    default: beta
+  prerelease_registry:
+    description: |
+      Registry to probe for the highest already-published pre-release number - one of "npm", "pypi" or
+      "crates". Empty skips pre-release version resolution and leaves the prerelease_number and
+      prerelease_version outputs empty; setting it also requires prerelease_package.
+    required: false
+    type: string
+    default: ""
+  prerelease_package:
+    description: Name of the package or crate to look up in prerelease_registry. Required alongside it.
+    required: false
+    type: string
+    default: ""
   cliff_config_path:
     description: Path to a custom git-cliff configuration file
     required: false
@@ -55,6 +75,24 @@ outputs:
   tag_name:
     description: Tag name for the new release (with a leading "v")
     value: ${{ steps.version_number.outputs.tag_name }}
+  prerelease_id:
+    description: The prerelease_id input, echoed for convenience
+    value: ${{ inputs.prerelease_id }}
+  prerelease_number:
+    description: |
+      One more than the highest pre-release number already published for version_number under
+      prerelease_id. Empty unless release_type is "prerelease" and prerelease_registry is set.
+    value: ${{ steps.prerelease.outputs.prerelease_number }}
+  prerelease_version:
+    description: |
+      Semver-flavoured pre-release version for npm and crates.io, e.g. "1.2.4-beta.7". Empty under the
+      same conditions as prerelease_number.
+    value: ${{ steps.prerelease.outputs.prerelease_version }}
+  prerelease_version_pep440:
+    description: |
+      PEP 440-flavoured pre-release version for PyPI, e.g. "1.2.4b7". Empty under the same conditions as
+      prerelease_number.
+    value: ${{ steps.prerelease.outputs.prerelease_version_pep440 }}
   release_notes:
     description: Release notes for the new release
     value: ${{ steps.release_notes.outputs.release_notes }}
@@ -116,6 +154,34 @@ runs:
         echo version_number=$version_number | tee -a $GITHUB_OUTPUT
         echo tag_name=v$version_number | tee -a $GITHUB_OUTPUT
         echo is_prerelease=${{ inputs.release_type == 'prerelease' }} | tee -a $GITHUB_OUTPUT
+    - name: Resolve pre-release version
+      id: prerelease
+      if: inputs.release_type == 'prerelease'
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      env:
+        BASE_VERSION: ${{ steps.version_number.outputs.version_number }}
+        PRERELEASE_ID: ${{ inputs.prerelease_id }}
+        PRERELEASE_PACKAGE: ${{ inputs.prerelease_package }}
+        PRERELEASE_REGISTRY: ${{ inputs.prerelease_registry }}
+      run: |
+        set -exo pipefail # A failed lookup must not be masked by tee's exit status.
+        if [[ -z "$PRERELEASE_REGISTRY" && -z "$PRERELEASE_PACKAGE" ]]; then
+          echo 'Pre-release version resolution is not configured, skipping.'
+          exit 0
+        fi
+
+        if [[ -z "$PRERELEASE_REGISTRY" || -z "$PRERELEASE_PACKAGE" ]]; then
+          echo '::error title=Incomplete pre-release configuration::Set both prerelease_registry and prerelease_package, or neither.'
+          exit 1
+        fi
+
+        python next_prerelease.py \
+          --registry "$PRERELEASE_REGISTRY" \
+          --package "$PRERELEASE_PACKAGE" \
+          --base-version "$BASE_VERSION" \
+          --prerelease-id "$PRERELEASE_ID" |
+          tee -a "$GITHUB_OUTPUT"
     - name: Generate release notes
       id: release_notes
       shell: bash
