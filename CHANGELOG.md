@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.0](https://github.com/apify/actions/compare/v1.4.1...v1.5.0) (2026-09-01)
+
+
+### Features
+
+* **git-cliff-release:** Determine pre-release numbers ([#39](https://github.com/apify/actions/issues/39)) ([b1c5894](https://github.com/apify/actions/commit/b1c5894af176623a05181ffbcf5eb7190e0b122f))
+
 ## [1.4.1](https://github.com/apify/actions/compare/v1.4.0...v1.4.1) (2026-08-17)
 
 
