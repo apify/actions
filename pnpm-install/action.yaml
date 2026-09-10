@@ -32,6 +32,14 @@ runs:
       with:
         swap-size-gb: 10
 
+    # The default Windows temp dir is a network disk, ~5x slower at small files than RUNNER_TEMP (apify/actor-templates#907).
+    - name: Use the runner's local disk for temp files
+      if: runner.os == 'Windows'
+      shell: bash
+      run: |
+        echo "TMP=$RUNNER_TEMP" >> "$GITHUB_ENV"
+        echo "TEMP=$RUNNER_TEMP" >> "$GITHUB_ENV"
+
     - uses: pnpm/action-setup@v6.0.8
       name: Install pnpm
       with:
