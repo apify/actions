@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.0](https://github.com/apify/actions/compare/v1.5.0...v1.6.0) (2026-09-18)
+
+
+### Features
+
+* **git-cliff-release:** Add support for pre-major releases ([#43](https://github.com/apify/actions/issues/43)) ([2aa3be8](https://github.com/apify/actions/commit/2aa3be8826a9b8b53beec46fbc1cd2fbd30143a5))
+
 ## [1.5.0](https://github.com/apify/actions/compare/v1.4.1...v1.5.0) (2026-09-01)
 
 
