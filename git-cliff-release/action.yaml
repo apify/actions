@@ -18,6 +18,15 @@ inputs:
     required: false
     type: string
     default: ""
+  premajor_version:
+    description: |
+      Major version that this branch pre-releases, e.g. "4". Set it on a branch that publishes releases of
+      a major which has no stable tag yet - the newest reachable tag then belongs to the major the branch
+      was cut from, and bumping it would produce a version of the wrong release line. Ignored once
+      v<premajor_version>.0.0 is tagged.
+    required: false
+    type: string
+    default: ""
   prerelease_id:
     description: |
       Pre-release identifier used when release_type is "prerelease" - one of "alpha", "beta" or "rc".
@@ -133,10 +142,28 @@ runs:
         GIT_CLIFF_WORKDIR: ${{ github.action_path }}
         GITHUB_REPO: ${{ github.repository }}
         GITHUB_TOKEN: ${{ inputs.token }}
+        PREMAJOR_VERSION: ${{ inputs.premajor_version }}
       run: |
         set -x
+        if [[ -n "$PREMAJOR_VERSION" && ! "$PREMAJOR_VERSION" =~ ^[1-9][0-9]*$ ]]; then
+          echo "::error title=Invalid premajor_version::Expected a bare major version number such as 4, got '$PREMAJOR_VERSION'"
+          exit 1
+        fi
+
+        # Pin the base version while the pre-released major has no stable tag - see the premajor_version
+        # input. Only git-cliff's version resolution is affected: the changelog still spans the commits
+        # since the newest tag, which is what an unreleased major consists of.
+        premajor_base=""
+        if [[ -n "$PREMAJOR_VERSION" ]] &&
+          ! git -C "$GIT_CLIFF_REPOSITORY" tag --list "v$PREMAJOR_VERSION.*" |
+            grep -qE "^v$PREMAJOR_VERSION\.[0-9]+\.[0-9]+$"; then
+          premajor_base="$PREMAJOR_VERSION.0.0"
+        fi
+
         if [[ '${{ inputs.release_type }}' = custom ]]; then
           version_number=$(echo ${{ inputs.custom_version }} | sed s/^v//)
+        elif [[ -n "$premajor_base" ]]; then
+          version_number=$premajor_base
         elif [[ '${{ inputs.release_type }}' = auto ]]; then
           version_number=$(git-cliff --bumped-version | sed s/^v//)
 

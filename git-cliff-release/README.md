@@ -6,6 +6,7 @@ This action uses conventional commit history to determine the recommended versio
 
 - **release_type**: One of `auto` (default), `prerelease`, `patch`, `minor`, `major` and `custom`. `auto` means that the version will be determined based on the commit history, `custom` will use the value of the `custom_version` input parameter, and `patch`, `minor` and `major` allow forcing the bump type. `prerelease` always bumps the patch version - see [Pre-releases](#pre-releases).
 - **custom_version**: Optional unless the `release_type` is set to `custom`.
+- **premajor_version**: Major version that this branch pre-releases, e.g. `4` - see [Pre-major release lines](#pre-major-release-lines). Empty by default.
 - **cliff_config_path**: Path to a configuration file for git-cliff. If none is given, a built-in configuration will be used.
 - **existing_changelog_path**: Path to an existing changelog. If given, the new changelog contents will be prepended to it intelligently.
 - **token**: Github token to be used by github CLI (should be relevant for private repositories only)
@@ -63,6 +64,28 @@ is safe; switching `prerelease_registry` is not, because each registry carries i
 
 Publishing one commit to several registries is out of scope: the probed registry is the only source of truth,
 so a second registry that received a publish this one missed will reject the number.
+
+### Pre-major release lines
+
+A branch that publishes releases of a major which has no stable tag yet - `4.0.0-beta.N` from a `v4`
+branch while `master` still ships 3.x - has no tag to bump: the newest reachable one belongs to the major
+the branch was cut from, so the version would come out on the wrong release line. Set `premajor_version`
+to the major being pre-released and the version is based on `<premajor_version>.0.0` instead:
+
+```yaml
+- name: Prepare release metadata
+  id: metadata
+  uses: apify/actions/git-cliff-release@1.0.0
+  with:
+    release_type: prerelease
+    prerelease_registry: npm
+    prerelease_package: apify
+    premajor_version: 4
+```
+
+The input is ignored as soon as `v<premajor_version>.0.0` is tagged, so the branch can keep it set and
+carry on with normal patch bumps after the major ships. Tagging the major itself is a `release_type: major`
+run with `premajor_version` still set.
 
 ## Example usage
 
