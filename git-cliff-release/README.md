@@ -77,10 +77,10 @@ to the major being pre-released and the version is based on `<premajor_version>.
   id: metadata
   uses: apify/actions/git-cliff-release@1.0.0
   with:
-      release_type: prerelease
-      prerelease_registry: npm
-      prerelease_package: apify
-      premajor_version: 4
+    release_type: prerelease
+    prerelease_registry: npm
+    prerelease_package: apify
+    premajor_version: 4
 ```
 
 The input is ignored as soon as `v<premajor_version>.0.0` is tagged, so the branch can keep it set and

@@ -145,7 +145,7 @@ runs:
         PREMAJOR_VERSION: ${{ inputs.premajor_version }}
       run: |
         set -x
-        if [[ -n "$PREMAJOR_VERSION" && ! "$PREMAJOR_VERSION" =~ ^[0-9]+$ ]]; then
+        if [[ -n "$PREMAJOR_VERSION" && ! "$PREMAJOR_VERSION" =~ ^[1-9][0-9]*$ ]]; then
           echo "::error title=Invalid premajor_version::Expected a bare major version number such as 4, got '$PREMAJOR_VERSION'"
           exit 1
         fi
