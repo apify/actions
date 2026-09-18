@@ -20,7 +20,7 @@ runs:
         PR_TITLE: ${{ github.event.pull_request.title }}
 
     - name: Spell-check PR title
-      uses: crate-ci/typos@master
+      uses: crate-ci/typos@512fc24f32f44ab01972217aaaf3dc86ec234d53 # v1.50.2
       with:
         files: /tmp/pr-title.txt
 
