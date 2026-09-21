@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.1](https://github.com/apify/actions/compare/v1.6.0...v1.6.1) (2026-09-21)
+
+
+### Bug Fixes
+
+* **pr-title-check:** Pinned crate-ci/typos to commit SHA of v1.50.2 ([#45](https://github.com/apify/actions/issues/45)) ([6490140](https://github.com/apify/actions/commit/64901403099768a72f36e218f835ff8a4d798264))
+
 ## [1.6.0](https://github.com/apify/actions/compare/v1.5.0...v1.6.0) (2026-09-18)
 
 
