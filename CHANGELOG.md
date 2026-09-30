@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.6.2](https://github.com/apify/actions/compare/v1.6.1...v1.6.2) (2026-09-30)
+
+
+### Bug Fixes
+
+* **pnpm-install:** bump pnpm/action-setup to v6.1.0 for pnpm 12 support ([#48](https://github.com/apify/actions/issues/48)) ([427f4ea](https://github.com/apify/actions/commit/427f4eac28c7ae64e35334075e57801cf6f9a623))
+
+
+### Performance Improvements
+
+* **pnpm-install:** use the runner's local disk for temp files on Windows ([#41](https://github.com/apify/actions/issues/41)) ([9fdb96b](https://github.com/apify/actions/commit/9fdb96bf549c6ee555d204cd58896d077a9d762d))
+
 ## [1.6.1](https://github.com/apify/actions/compare/v1.6.0...v1.6.1) (2026-09-21)
 
 
