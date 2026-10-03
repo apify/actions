@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.7.0](https://github.com/apify/actions/compare/v1.6.2...v1.7.0) (2026-10-03)
+
+
+### Features
+
+* **mongodb-query-index-check:** tune review prompt from four months of PR feedback ([#42](https://github.com/apify/actions/issues/42)) ([4cf7c8f](https://github.com/apify/actions/commit/4cf7c8fb16e74f90489808f49aef6fc9cb1d741d))
+
+
+### Bug Fixes
+
+* **mongodb-query-index-check:** stop mentioning [@mtrunkat](https://github.com/mtrunkat) in the review summary ([#49](https://github.com/apify/actions/issues/49)) ([46acfdf](https://github.com/apify/actions/commit/46acfdf4ba7fdce5feac31506461e3232ce5ae61))
+
 ## [1.6.2](https://github.com/apify/actions/compare/v1.6.1...v1.6.2) (2026-09-30)
 
 
