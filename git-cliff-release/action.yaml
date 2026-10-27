@@ -285,13 +285,6 @@ runs:
           python enhance_context.py --repo $GITHUB_REPO "${enhance_context_args[@]}" |
           git-cliff --from-context - "${print_changelog_args[@]}"
 
-        # A stable release consumes the whole unreleased section and renders without the markers.
-        # Reinsert an empty marker block ahead of the first release section, so the markers are
-        # always present and the next prerelease has a stable structure to splice into.
-        if ! grep -q '<!-- git-cliff-unreleased-start -->' $out_file; then
-          sed -i '0,/^## /s//<!-- git-cliff-unreleased-start -->\n\n<!-- git-cliff-unreleased-end -->\n\n&/' $out_file
-        fi
-
         sed -i '$a\' $out_file # Make sure there is a newline at the end of the output file
 
         # Stage the changelog for the artifact upload. Consumers that receive the changelog through an

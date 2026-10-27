@@ -107,6 +107,12 @@ if __name__ == '__main__':
             commit['raw_message'] = escape_markdown(subject) + newline + rest
             commit['message'] = escape_markdown(commit['message'])
 
+    # The newest release heads the changelog. A stable one renders an empty unreleased marker block above itself, so the
+    # markers are always present for the next prerelease to splice into.
+    if context and not args.release_notes:
+        context[0]['extra'] = context[0]['extra'] or {}
+        context[0]['extra']['is_changelog_head'] = True
+
     if not args.no_github:
         for release in context:
             enhance_release(release, is_release_notes=args.release_notes, unreleased_version=args.unreleased_version)
