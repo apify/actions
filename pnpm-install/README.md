@@ -29,3 +29,14 @@ steps:
     with:
       github-registry-token: ${{ secrets.APIFY_SERVICE_ACCOUNT_GITHUB_REGISTRY_TOKEN }}
 ```
+
+## Windows runners
+
+On Windows the action also points `TMP` and `TEMP` at `RUNNER_TEMP` for the rest of the job. The default temp dir lives on a network-backed disk that is several times slower at small-file writes than the runner's local SSD, which matters for anything that unpacks a project or a `node_modules` tree into the temp dir.
+
+If the job installs Playwright browsers, gate `--with-deps` on Linux. On Windows the flag enables the Media Foundation feature, which takes about three minutes and only adds video codecs:
+
+```yaml
+  - name: Install Playwright browsers
+    run: pnpm exec playwright install chromium ${{ runner.os == 'Linux' && '--with-deps' || '' }}
+```

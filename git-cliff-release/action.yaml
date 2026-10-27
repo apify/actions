@@ -18,6 +18,35 @@ inputs:
     required: false
     type: string
     default: ""
+  premajor_version:
+    description: |
+      Major version that this branch pre-releases, e.g. "4". Set it on a branch that publishes releases of
+      a major which has no stable tag yet - the newest reachable tag then belongs to the major the branch
+      was cut from, and bumping it would produce a version of the wrong release line. Ignored once
+      v<premajor_version>.0.0 is tagged.
+    required: false
+    type: string
+    default: ""
+  prerelease_id:
+    description: |
+      Pre-release identifier used when release_type is "prerelease" - one of "alpha", "beta" or "rc".
+      Doubles as the npm dist-tag in most setups.
+    required: false
+    type: string
+    default: beta
+  prerelease_registry:
+    description: |
+      Registry to probe for the highest already-published pre-release number - one of "npm", "pypi" or
+      "crates". Empty skips pre-release version resolution and leaves the prerelease_number and
+      prerelease_version outputs empty; setting it also requires prerelease_package.
+    required: false
+    type: string
+    default: ""
+  prerelease_package:
+    description: Name of the package or crate to look up in prerelease_registry. Required alongside it.
+    required: false
+    type: string
+    default: ""
   cliff_config_path:
     description: Path to a custom git-cliff configuration file
     required: false
@@ -55,6 +84,26 @@ outputs:
   tag_name:
     description: Tag name for the new release (with a leading "v")
     value: ${{ steps.version_number.outputs.tag_name }}
+  prerelease_id:
+    description: |
+      The prerelease_id input, echoed for convenience - it doubles as the npm dist-tag. Empty under the
+      same conditions as prerelease_number, so it cannot tag a stable release as a pre-release.
+    value: ${{ steps.prerelease.outputs.prerelease_id }}
+  prerelease_number:
+    description: |
+      One more than the highest pre-release number already published for version_number under
+      prerelease_id. Empty unless release_type is "prerelease" and prerelease_registry is set.
+    value: ${{ steps.prerelease.outputs.prerelease_number }}
+  prerelease_version:
+    description: |
+      Semver-flavoured pre-release version for npm and crates.io, e.g. "1.2.4-beta.7". Empty under the
+      same conditions as prerelease_number.
+    value: ${{ steps.prerelease.outputs.prerelease_version }}
+  prerelease_version_pep440:
+    description: |
+      PEP 440-flavoured pre-release version for PyPI, e.g. "1.2.4b7". Empty under the same conditions as
+      prerelease_number.
+    value: ${{ steps.prerelease.outputs.prerelease_version_pep440 }}
   release_notes:
     description: Release notes for the new release
     value: ${{ steps.release_notes.outputs.release_notes }}
@@ -93,10 +142,28 @@ runs:
         GIT_CLIFF_WORKDIR: ${{ github.action_path }}
         GITHUB_REPO: ${{ github.repository }}
         GITHUB_TOKEN: ${{ inputs.token }}
+        PREMAJOR_VERSION: ${{ inputs.premajor_version }}
       run: |
         set -x
+        if [[ -n "$PREMAJOR_VERSION" && ! "$PREMAJOR_VERSION" =~ ^[1-9][0-9]*$ ]]; then
+          echo "::error title=Invalid premajor_version::Expected a bare major version number such as 4, got '$PREMAJOR_VERSION'"
+          exit 1
+        fi
+
+        # Pin the base version while the pre-released major has no stable tag - see the premajor_version
+        # input. Only git-cliff's version resolution is affected: the changelog still spans the commits
+        # since the newest tag, which is what an unreleased major consists of.
+        premajor_base=""
+        if [[ -n "$PREMAJOR_VERSION" ]] &&
+          ! git -C "$GIT_CLIFF_REPOSITORY" tag --list "v$PREMAJOR_VERSION.*" |
+            grep -qE "^v$PREMAJOR_VERSION\.[0-9]+\.[0-9]+$"; then
+          premajor_base="$PREMAJOR_VERSION.0.0"
+        fi
+
         if [[ '${{ inputs.release_type }}' = custom ]]; then
           version_number=$(echo ${{ inputs.custom_version }} | sed s/^v//)
+        elif [[ -n "$premajor_base" ]]; then
+          version_number=$premajor_base
         elif [[ '${{ inputs.release_type }}' = auto ]]; then
           version_number=$(git-cliff --bumped-version | sed s/^v//)
 
@@ -116,6 +183,34 @@ runs:
         echo version_number=$version_number | tee -a $GITHUB_OUTPUT
         echo tag_name=v$version_number | tee -a $GITHUB_OUTPUT
         echo is_prerelease=${{ inputs.release_type == 'prerelease' }} | tee -a $GITHUB_OUTPUT
+    - name: Resolve pre-release version
+      id: prerelease
+      if: inputs.release_type == 'prerelease'
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      env:
+        BASE_VERSION: ${{ steps.version_number.outputs.version_number }}
+        PRERELEASE_ID: ${{ inputs.prerelease_id }}
+        PRERELEASE_PACKAGE: ${{ inputs.prerelease_package }}
+        PRERELEASE_REGISTRY: ${{ inputs.prerelease_registry }}
+      run: |
+        set -exo pipefail # A failed lookup must not be masked by tee's exit status.
+        if [[ -z "$PRERELEASE_REGISTRY" && -z "$PRERELEASE_PACKAGE" ]]; then
+          echo 'Pre-release version resolution is not configured, skipping.'
+          exit 0
+        fi
+
+        if [[ -z "$PRERELEASE_REGISTRY" || -z "$PRERELEASE_PACKAGE" ]]; then
+          echo '::error title=Incomplete pre-release configuration::Set both prerelease_registry and prerelease_package, or neither.'
+          exit 1
+        fi
+
+        python next_prerelease.py \
+          --registry "$PRERELEASE_REGISTRY" \
+          --package "$PRERELEASE_PACKAGE" \
+          --base-version "$BASE_VERSION" \
+          --prerelease-id "$PRERELEASE_ID" |
+          tee -a "$GITHUB_OUTPUT"
     - name: Generate release notes
       id: release_notes
       shell: bash

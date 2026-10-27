@@ -100,7 +100,9 @@ jobs:
 | 🟡 medium | Index used but inefficient: low selectivity, likely poor read/return ratio, wrong sort direction, `$or` branch without an index. |
 | 🟢 low | Stylistic: tighter partial filter, covered-query opportunity, missing index name. |
 
-Any finding turns the check red unless `request-changes` is set to `false`.
+Any finding turns the check red unless `request-changes` is set to `false` — except findings a human already settled with a reasoned reply on an earlier run's thread (an explain plan, "one-off migration, bounded set", an API constraint), which stop counting toward the result.
+
+One-off migration scripts get operational advice (a `hint`, batching, replica reads, a timing window, or an explicitly accepted scan) instead of new-index recommendations; an unbatched scan of a multi-million-document collection is still critical even there.
 
 ## Limitations
 
