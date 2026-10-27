@@ -105,7 +105,6 @@ if __name__ == '__main__':
         for commit in release['commits']:
             subject, newline, rest = commit['raw_message'].partition('\n')
             commit['raw_message'] = escape_markdown(subject) + newline + rest
-            commit['message'] = escape_markdown(commit['message'])
 
     # The newest release heads the changelog. A stable one renders an empty unreleased marker block above itself, so the
     # markers are always present for the next prerelease to splice into.
