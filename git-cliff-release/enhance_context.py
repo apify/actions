@@ -1,11 +1,33 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 from argparse import ArgumentParser, BooleanOptionalAction
 from pathlib import Path
 from typing import Any
+
+# A CommonMark code span: a run of backticks, then content, then a run of the same length.
+CODE_SPAN = re.compile(r'(?<!`)(`+)(?!`).+?(?<!`)\1(?!`)')
+
+# Characters that MDX parses as JSX or expressions. Docusaurus renders the changelog as MDX, where a stray `<` or `{`
+# breaks the docs build.
+MDX_SPECIAL = re.compile(r'([<{}])')
+
+
+def escape_markdown(text: str) -> str:
+    """Backslash-escape MDX special characters outside code spans, so the text renders the same on GitHub and in MDX."""
+    parts = []
+    position = 0
+
+    for code_span in CODE_SPAN.finditer(text):
+        parts.append(MDX_SPECIAL.sub(r'\\\1', text[position : code_span.start()]))
+        parts.append(code_span.group())
+        position = code_span.end()
+
+    parts.append(MDX_SPECIAL.sub(r'\\\1', text[position:]))
+    return ''.join(parts)
 
 
 def load_pr_issues(owner: str, repo: str) -> dict[int, list[int]]:
@@ -77,6 +99,18 @@ if __name__ == '__main__':
 
     pr_issues = load_pr_issues(owner, repo)
     context = json.load(sys.stdin)
+
+    # `git-cliff --from-context` parses each commit again from `raw_message`, so the subject line is escaped there.
+    for release in context:
+        for commit in release['commits']:
+            subject, newline, rest = commit['raw_message'].partition('\n')
+            commit['raw_message'] = escape_markdown(subject) + newline + rest
+
+    # The newest release heads the changelog. A stable one renders an empty unreleased marker block above itself, so the
+    # markers are always present for the next prerelease to splice into.
+    if context and not args.release_notes:
+        context[0]['extra'] = context[0]['extra'] or {}
+        context[0]['extra']['is_changelog_head'] = True
 
     if not args.no_github:
         for release in context:
