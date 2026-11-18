@@ -28,7 +28,7 @@ runs:
     # an existing swap file, so the action works there.
     - name: Set up swap space
       if: runner.os == 'Linux' && runner.arch != 'ARM64'
-      uses: pierotofy/set-swap-space@v1.0
+      uses: pierotofy/set-swap-space@49819abfb41bd9b44fb781159c033dba90353a7c # v1.0
       with:
         swap-size-gb: 10
 
@@ -40,7 +40,7 @@ runs:
         echo "TMP=$RUNNER_TEMP" >> "$GITHUB_ENV"
         echo "TEMP=$RUNNER_TEMP" >> "$GITHUB_ENV"
 
-    - uses: pnpm/action-setup@v6.1.0
+    - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
       name: Install pnpm
       with:
         run_install: false
@@ -84,7 +84,7 @@ runs:
       run: |
         echo "HASH=${{ hashFiles('**/pnpm-lock.yaml') }}" >> $GITHUB_OUTPUT
 
-    - uses: actions/cache@v6.1.0
+    - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       name: Setup pnpm cache
       with:
         path: ${{ steps.pnpm-config.outputs.STORE_PATH }}

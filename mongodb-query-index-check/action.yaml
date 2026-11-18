@@ -86,7 +86,7 @@ runs:
 
     - name: Pre-check PR diff
       id: pre-check
-      uses: actions/github-script@v8
+      uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
       env:
         INPUT_PATHS: ${{ inputs.paths }}
         INPUT_PATHS_IGNORE: '**/node_modules/**,**/dist/**,**/build/**,**/test/**,**/__tests__/**,**/*.test.*,**/*.spec.*,**/mongo-indexes/**'
@@ -101,7 +101,7 @@ runs:
 
     - name: Checkout apify-core mongo-indexes
       if: steps.pre-check.outputs.should-run == 'true' && inputs.apify-core-token != ''
-      uses: actions/checkout@v6
+      uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       with:
         repository: apify/apify-core
         ref: develop
@@ -159,7 +159,7 @@ runs:
 
     - name: Run Claude Code review
       if: steps.pre-check.outputs.should-run == 'true'
-      uses: anthropics/claude-code-action@v1
+      uses: anthropics/claude-code-action@e5812cd75691ca7bbfc57c0ecf4441db3a1ab7dd # v1.0.281
       with:
         anthropic_api_key: ${{ inputs.anthropic-api-key }}
         github_token: ${{ inputs.github-token }}
