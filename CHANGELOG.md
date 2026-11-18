@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.7.0](https://github.com/apify/actions/compare/v1.6.2...v1.7.0) (2026-11-18)
+
+
+### Features
+
+* **mongodb-query-index-check:** tune review prompt from four months of PR feedback ([#42](https://github.com/apify/actions/issues/42)) ([4cf7c8f](https://github.com/apify/actions/commit/4cf7c8fb16e74f90489808f49aef6fc9cb1d741d))
+
+
+### Bug Fixes
+
+* **git-cliff-release:** fix unreleased markers and escaping in the changelog ([#38](https://github.com/apify/actions/issues/38)) ([05c858a](https://github.com/apify/actions/commit/05c858accd63d50e7db8007cf28d101ec8af3c2d))
+* **mongodb-query-index-check:** stop mentioning [@mtrunkat](https://github.com/mtrunkat) in the review summary ([#49](https://github.com/apify/actions/issues/49)) ([46acfdf](https://github.com/apify/actions/commit/46acfdf4ba7fdce5feac31506461e3232ce5ae61))
+* pin third-party actions to commit SHAs ([#52](https://github.com/apify/actions/issues/52)) ([5ea2ae6](https://github.com/apify/actions/commit/5ea2ae6c79ce1578e8df744e2d23ad2264451ddf))
+* validate the version number in the release actions ([#54](https://github.com/apify/actions/issues/54)) ([d295fdb](https://github.com/apify/actions/commit/d295fdb0053774c8e37c72feb0a85c678f810802))
+* **wait-for-checks:** read all pages of check runs ([#53](https://github.com/apify/actions/issues/53)) ([a7f4861](https://github.com/apify/actions/commit/a7f4861e568da64eebb9e492a8380f86a82819b1))
+
 ## [1.6.2](https://github.com/apify/actions/compare/v1.6.1...v1.6.2) (2026-09-30)
 
 
