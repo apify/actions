@@ -138,13 +138,12 @@ export async function main({ github, context, core, env }: { github: Octokit; co
         };
 
         const queryCheckStatus = async (): Promise<CheckRun[]> => {
-            const response = await github.rest.checks.listForRef({
+            let checks = (await github.paginate(github.rest.checks.listForRef, {
                 owner,
                 repo,
                 ref: targetSHA,
-            });
-
-            let checks = response.data.check_runs as CheckRun[];
+                per_page: 100,
+            })) as CheckRun[];
             logChecks(checks, 'Checks running on ref:');
 
             const filtersToIgnore = [...ignoreChecks];
