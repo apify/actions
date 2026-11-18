@@ -14,7 +14,7 @@ inputs:
       - major
       - custom
   custom_version:
-    description: The custom version to bump to (only for "custom" type), with or without a leading "v"
+    description: The custom version to bump to (only for "custom" type), such as 1.2.3 or 3.0.0rc1, with or without a leading "v"
     required: false
     type: string
     default: ""
@@ -163,7 +163,10 @@ runs:
         fi
 
         if [[ "$RELEASE_TYPE" = custom ]]; then
-          version_number=$(echo "$CUSTOM_VERSION" | sed s/^v//)
+          shopt -s extglob
+          custom_version=${CUSTOM_VERSION##+([[:space:]])}
+          custom_version=${custom_version%%+([[:space:]])}
+          version_number=$(echo "$custom_version" | sed s/^v//)
         elif [[ -n "$premajor_base" ]]; then
           version_number=$premajor_base
         elif [[ "$RELEASE_TYPE" = auto ]]; then
@@ -185,7 +188,7 @@ runs:
 
         # The version ends up in tag names, release names, and commands of the calling workflows.
         if [[ ! "$version_number" =~ ^[0-9]+\.[0-9]+\.[0-9]+[0-9A-Za-z.+-]*$ ]]; then
-          echo "::error title=Invalid version number::Expected a version such as 1.2.3, optionally with a pre-release or build suffix"
+          echo "::error title=Invalid version number::Expected a version such as 1.2.3, optionally with a pre-release or build suffix, got ${version_number@Q}"
           exit 1
         fi
         echo version_number=$version_number | tee -a $GITHUB_OUTPUT
@@ -228,12 +231,13 @@ runs:
         GIT_CLIFF_WORKDIR: ${{ github.action_path }}
         GITHUB_REPO: ${{ github.repository }}
         GITHUB_TOKEN: ${{ inputs.token }}
+        ADD_GITHUB_LINKS: ${{ inputs.add-github-links }}
       working-directory: ${{ github.action_path }}
       run: |
         set -x
         enhance_context_args=()
 
-        if [[ ${{ inputs.add-github-links }} = false ]]; then
+        if [[ "$ADD_GITHUB_LINKS" = false ]]; then
           enhance_context_args+=(--no-github)
         fi
 
@@ -253,6 +257,8 @@ runs:
         GITHUB_REPO: ${{ github.repository }}
         GITHUB_TOKEN: ${{ inputs.token }}
         RELEASE_TYPE: ${{ inputs.release_type }}
+        ADD_GITHUB_LINKS: ${{ inputs.add-github-links }}
+        EXISTING_CHANGELOG_PATH: ${{ inputs.existing_changelog_path }}
       working-directory: ${{ github.action_path }}
       run: |
         set -x
@@ -262,9 +268,9 @@ runs:
 
         out_file=$GIT_CLIFF_WORKDIR/new_changelog.md
 
-        if [[ -n "${{ inputs.existing_changelog_path }}" ]]; then
+        if [[ -n "$EXISTING_CHANGELOG_PATH" ]]; then
           out_file=$GIT_CLIFF_WORKDIR/existing_changelog.md
-          cp "$GIT_CLIFF_REPOSITORY/${{ inputs.existing_changelog_path }}" $out_file
+          cp "$GIT_CLIFF_REPOSITORY/$EXISTING_CHANGELOG_PATH" $out_file
           # Drop the unreleased section including the blank lines right after it, so the freshly
           # rendered section fully controls the spacing around the markers.
           awk '
@@ -280,7 +286,7 @@ runs:
           print_changelog_args+=(--output "$out_file")
         fi
 
-        if [[ ${{ inputs.add-github-links }} = false ]]; then
+        if [[ "$ADD_GITHUB_LINKS" = false ]]; then
           enhance_context_args+=(--no-github)
         fi
 

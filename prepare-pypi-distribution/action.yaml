@@ -59,11 +59,12 @@ runs:
         VERSION_NUMBER: ${{ inputs.version_number }}
         IS_PRERELEASE: ${{ inputs.is_prerelease }}
       run: |
-        if [[ ! "$VERSION_NUMBER" =~ ^[0-9]+\.[0-9]+\.[0-9]+[0-9A-Za-z.+-]*$ ]]; then
-          echo "::error title=Invalid version number::Expected a version such as 1.2.3, optionally with a pre-release or build suffix"
-          exit 1
-        fi
         if [ -n "$IS_PRERELEASE" ]; then
+          # The beta number is appended to this version, so it must be a plain release version.
+          if [[ ! "$VERSION_NUMBER" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error title=Invalid version number::Expected a version such as 1.2.3, got ${VERSION_NUMBER@Q}"
+            exit 1
+          fi
           next_beta=$(
             curl "https://pypi.org/pypi/${PACKAGE_NAME}/json" | jq --raw-output --arg prefix "${VERSION_NUMBER}b" '
               [
