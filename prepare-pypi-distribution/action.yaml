@@ -54,15 +54,23 @@ runs:
     # Updates the version number in the project's configuration.
     - name: Set version in pyproject.toml
       shell: bash
+      env:
+        PACKAGE_NAME: ${{ inputs.package_name }}
+        VERSION_NUMBER: ${{ inputs.version_number }}
+        IS_PRERELEASE: ${{ inputs.is_prerelease }}
       run: |
-        if [ -n "${{ inputs.is_prerelease }}" ]; then
+        if [[ ! "$VERSION_NUMBER" =~ ^[0-9]+\.[0-9]+\.[0-9]+[0-9A-Za-z.+-]*$ ]]; then
+          echo "::error title=Invalid version number::Expected a version such as 1.2.3, optionally with a pre-release or build suffix"
+          exit 1
+        fi
+        if [ -n "$IS_PRERELEASE" ]; then
           next_beta=$(
-            curl "https://pypi.org/pypi/${{ inputs.package_name }}/json" | jq --raw-output '
+            curl "https://pypi.org/pypi/${PACKAGE_NAME}/json" | jq --raw-output --arg prefix "${VERSION_NUMBER}b" '
               [
                 .releases |
                   keys |
                   .[] |
-                  select(startswith("${{ inputs.version_number }}b")) |
+                  select(startswith($prefix)) |
                   split("b") |
                   .[1] |
                   tonumber
@@ -71,7 +79,7 @@ runs:
               .[0] + 1
             '
           )
-          new_version="${{ inputs.version_number }}b${next_beta}"
+          new_version="${VERSION_NUMBER}b${next_beta}"
           echo "Updating version in pyproject.toml to ${new_version}"
           uv version "${new_version}"
         fi

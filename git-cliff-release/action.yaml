@@ -143,6 +143,8 @@ runs:
         GITHUB_REPO: ${{ github.repository }}
         GITHUB_TOKEN: ${{ inputs.token }}
         PREMAJOR_VERSION: ${{ inputs.premajor_version }}
+        RELEASE_TYPE: ${{ inputs.release_type }}
+        CUSTOM_VERSION: ${{ inputs.custom_version }}
       run: |
         set -x
         if [[ -n "$PREMAJOR_VERSION" && ! "$PREMAJOR_VERSION" =~ ^[1-9][0-9]*$ ]]; then
@@ -160,11 +162,11 @@ runs:
           premajor_base="$PREMAJOR_VERSION.0.0"
         fi
 
-        if [[ '${{ inputs.release_type }}' = custom ]]; then
-          version_number=$(echo ${{ inputs.custom_version }} | sed s/^v//)
+        if [[ "$RELEASE_TYPE" = custom ]]; then
+          version_number=$(echo "$CUSTOM_VERSION" | sed s/^v//)
         elif [[ -n "$premajor_base" ]]; then
           version_number=$premajor_base
-        elif [[ '${{ inputs.release_type }}' = auto ]]; then
+        elif [[ "$RELEASE_TYPE" = auto ]]; then
           version_number=$(git-cliff --bumped-version | sed s/^v//)
 
           # If there are no commits that increase semver, break.
@@ -174,11 +176,17 @@ runs:
             echo "::error title=Nothing to release::There were no commits that trigger a version bump since the last release"
             exit 1
           fi
-        elif [[ '${{ inputs.release_type }}' = prerelease ]]; then
+        elif [[ "$RELEASE_TYPE" = prerelease ]]; then
           # Prereleases only ever increase the patch version
           version_number=$(git-cliff --bump patch --unreleased --context | jq -r '.[0].version' | sed s/^v//)
         else
-          version_number=$(git-cliff --bump '${{ inputs.release_type }}' --unreleased --context | jq -r '.[0].version' | sed s/^v//)
+          version_number=$(git-cliff --bump "$RELEASE_TYPE" --unreleased --context | jq -r '.[0].version' | sed s/^v//)
+        fi
+
+        # The version ends up in tag names, release names, and commands of the calling workflows.
+        if [[ ! "$version_number" =~ ^[0-9]+\.[0-9]+\.[0-9]+[0-9A-Za-z.+-]*$ ]]; then
+          echo "::error title=Invalid version number::Expected a version such as 1.2.3, optionally with a pre-release or build suffix"
+          exit 1
         fi
         echo version_number=$version_number | tee -a $GITHUB_OUTPUT
         echo tag_name=v$version_number | tee -a $GITHUB_OUTPUT
@@ -244,6 +252,7 @@ runs:
         GIT_CLIFF_WORKDIR: ${{ github.action_path }}
         GITHUB_REPO: ${{ github.repository }}
         GITHUB_TOKEN: ${{ inputs.token }}
+        RELEASE_TYPE: ${{ inputs.release_type }}
       working-directory: ${{ github.action_path }}
       run: |
         set -x
@@ -275,7 +284,7 @@ runs:
           enhance_context_args+=(--no-github)
         fi
 
-        if [[ ${{ inputs.release_type }} = prerelease ]]; then
+        if [[ "$RELEASE_TYPE" = prerelease ]]; then
           enhance_context_args+=(--unreleased-version "${{ steps.version_number.outputs.tag_name }}")
         else
           dump_context_args+=(--tag "${{ steps.version_number.outputs.tag_name }}")
