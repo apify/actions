@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.9.0](https://github.com/apify/actions/compare/v1.8.0...v1.9.0) (2026-11-19)
+
+
+### Features
+
+* Update third-party actions ([#58](https://github.com/apify/actions/issues/58)) ([4e8d18c](https://github.com/apify/actions/commit/4e8d18c45a359860c6209f22e9e033ac6f3b51ab))
+
 ## [1.8.0](https://github.com/apify/actions/compare/v1.7.0...v1.8.0) (2026-11-19)
 
 
