@@ -2,10 +2,6 @@ name: "Lint GitHub workflows"
 description: "Lint GitHub workflows with actionlint"
 
 inputs:
-  extra-args:
-    description: "Additional extra arguments for actionlint"
-    required: false
-    default: ""
   actionlint-version:
     description: "actionlint version"
     required: false
@@ -22,12 +18,12 @@ runs:
       shell: bash
       env:
         ACTIONLINT_VERSION: ${{ inputs.actionlint-version }}
-        EXTRA_ARGS: ${{ inputs.extra-args }}
       run: |
-        # Disabling shellcheck as we are not using it
+        # Disabling shellcheck as we are not using it.
+        # actionlint picks up `.github/actionlint.yaml` from the repository on its own.
         docker run \
-          -v $(pwd):/repo \
+          -v "$(pwd)":/repo \
           --workdir /repo \
           --rm \
-          rhysd/actionlint:${ACTIONLINT_VERSION} \
-          -shellcheck="" $EXTRA_ARGS
+          "rhysd/actionlint:${ACTIONLINT_VERSION}" \
+          -shellcheck=""
