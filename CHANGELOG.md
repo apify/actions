@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.0](https://github.com/apify/actions/compare/v1.7.0...v1.8.0) (2026-11-19)
+
+
+### Features
+
+* Rewrite reusable workflows from `apify/workflows` to composite actions ([#55](https://github.com/apify/actions/issues/55)) ([a174efd](https://github.com/apify/actions/commit/a174efdf5d29153cd45b914b45856c5c474fd481))
+
 ## [1.7.0](https://github.com/apify/actions/compare/v1.6.2...v1.7.0) (2026-11-18)
 
 
