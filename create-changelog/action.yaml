@@ -61,7 +61,7 @@ runs:
   steps:
     - name: get changelog
       id: changelog
-      uses: apify/release-pr-action@5d8b596e568d2c64fe125f41b30787433cfd0998 # v3.8.0
+      uses: apify/release-pr-action@72946feef493fadc106db9eca6c20d94090a42ff # v3.9.0
       with:
         slack-token: ${{ inputs.slack-token }}
         github-token: ${{ inputs.github-token }}
