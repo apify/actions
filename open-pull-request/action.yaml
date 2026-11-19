@@ -1,0 +1,31 @@
+name: "Open pull request with changelog"
+description: "Open a release pull request with a changelog generated from commits, using apify/release-pr-action"
+
+inputs:
+  changelog-scopes:
+    description: 'Changelog scopes (i.e { "App": ["app", "application"] })'
+    required: true
+  base-branch:
+    description: "Base branch name"
+    required: false
+    default: master
+  github-token:
+    description: "Github token with read/write permission. If you want to trigger GH workflow runs with this you need to provide a real user token, not the default GITHUB_TOKEN."
+    required: true
+  open-ai-token:
+    description: "Open AI token"
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    - name: open release pull-request
+      uses: apify/release-pr-action@5d8b596e568d2c64fe125f41b30787433cfd0998 # v3.8.0
+      with:
+        github-token: ${{ inputs.github-token }}
+        changelog-scopes: ${{ inputs.changelog-scopes }}
+        base-branch: ${{ inputs.base-branch }}
+        create-release-pull-request: true
+        changelog-method: commits_compare
+        open-ai-token: ${{ inputs.open-ai-token }}

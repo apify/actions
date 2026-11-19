@@ -1,0 +1,139 @@
+name: "apify-factory review"
+description: "AI review and auto-approval pipeline of apify/ai-developer, run on pull request events"
+
+# The review and auto-approval pipeline of apify/ai-developer, called from a short workflow stub in each repository
+# that opts in. The stub must live in the repository itself: only a workflow GitHub runs there receives every push,
+# and a push that changes the code has to withdraw the bot's approval.
+#
+# The pipeline lives in apify/ai-developer, which is internal, and a public repository cannot call an internal
+# workflow or action. So this action holds only the wiring: it checks ai-developer out with the bot's token and runs
+# the action from that checkout.
+#
+# It runs when @apify-factory is requested as a reviewer, and also when the request is withdrawn, the PR goes back to
+# draft, or a push changes the code, to withdraw the approval with it. In a repository whose factory_auto_review custom
+# property is true, it also reviews a ready pull request when it opens, reopens, is marked ready or receives a push.
+# Only apify-factory's own approvals are ever withdrawn.
+#
+# The caller job owns `runs-on`, `timeout-minutes` (the original used 60) and:
+#   permissions:
+#     contents: read
+#     pull-requests: write
+#   concurrency:   # Never cancel a running review: the action posts nothing from a cancelled run.
+#     group: factory-review-job-${{ github.event.pull_request.number }}
+#     cancel-in-progress: false
+
+inputs:
+  policy:
+    description: "Optional JSON policy overrides for the calling repository (see the ai-developer auto-approve README)."
+    required: false
+    default: ""
+  ai-developer-ref:
+    description: "Ref of apify/ai-developer to run the pipeline from."
+    required: false
+    default: main
+  github-token:
+    description: "GitHub token used to read the review state of the pull request."
+    required: false
+    default: ${{ github.token }}
+  apify-factory-github-token:
+    description: "GitHub token of the apify-factory bot."
+    required: true
+  anthropic-api-key:
+    description: "Anthropic API key used by the review (the ANTHROPIC_API_KEY_APIFY_FACTORY_REVIEW secret)."
+    required: true
+  apify-factory-callback-token:
+    description: "Apify token that reaches the factory's core Actor. With `factory-public-url`, each review becomes a run on the factory dashboard."
+    required: false
+    default: ""
+  factory-public-url:
+    description: "Public URL of the factory (the organization variable FACTORY_PUBLIC_URL)."
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    # Runs on every pull request event but the request itself, by design: it is the only way to tell
+    # whether apify-factory has an approval at stake, is still requested, or reviews this repository
+    # on its own, and it costs three API reads. It reads the requested reviewers live rather than from
+    # the payload, which is stale when this run took the place of a newer event's waiting run.
+    - name: Look up the review state
+      id: lookup
+      if: github.event.action != 'review_requested' && github.event.action != 'review_request_removed'
+      # A failed lookup answers neither "false", so the review still runs: it must not be the reason
+      # a stale approval survives a push.
+      continue-on-error: true
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        REPO: ${{ github.repository }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+      run: |
+        set -euo pipefail
+        # A dismissed approval is state DISMISSED, so it stops counting on its own.
+        ids=$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/reviews" \
+          --jq '.[] | select(.user.login == "apify-factory" and .state == "APPROVED") | .id')
+        echo "approved=$([ -n "$ids" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+        requested=$(gh api "repos/$REPO/pulls/$PR_NUMBER/requested_reviewers" \
+          --jq '[.users[].login] | index("apify-factory") != null')
+        echo "requested=$requested" >> "$GITHUB_OUTPUT"
+        # The repository's factory_auto_review custom property: review every ready pull request.
+        auto=$(gh api "repos/$REPO/properties/values" \
+          --jq '[.[] | select(.property_name == "factory_auto_review") | .value][0] == "true"' \
+          2>/dev/null) || auto=false
+        echo "auto_review=$auto" >> "$GITHUB_OUTPUT"
+
+    # A review request names one reviewer, so a request for anybody else is not this pipeline's
+    # business. On the other events the job runs when the bot is still requested (except on
+    # `opened`, whose own review_requested event reviews it), when an approval
+    # is at stake, or when the repository reviews every ready pull request on its own.
+    - name: Decide whether to review
+      id: decide
+      shell: bash
+      env:
+        ACTION: ${{ github.event.action }}
+        REQUESTED_REVIEWER: ${{ github.event.requested_reviewer.login }}
+        IS_DRAFT: ${{ github.event.pull_request.draft }}
+        APPROVED: ${{ steps.lookup.outputs.approved }}
+        REQUESTED: ${{ steps.lookup.outputs.requested }}
+        AUTO_REVIEW: ${{ steps.lookup.outputs.auto_review }}
+      run: |
+        run=false
+        if [ "$REQUESTED_REVIEWER" = "apify-factory" ]; then
+          run=true
+        elif [ "$ACTION" != "review_requested" ] && [ "$ACTION" != "review_request_removed" ]; then
+          if [ "$REQUESTED" != "false" ] && [ "$ACTION" != "opened" ]; then
+            run=true
+          elif [ "$APPROVED" != "false" ]; then
+            run=true
+          elif [ "$AUTO_REVIEW" = "true" ] && [ "$IS_DRAFT" != "true" ]; then
+            case "$ACTION" in opened|reopened|ready_for_review|synchronize) run=true ;; esac
+          fi
+        fi
+        echo "Review: $run"
+        echo "run=$run" >> "$GITHUB_OUTPUT"
+
+    - name: Check out apify/ai-developer
+      if: steps.decide.outputs.run == 'true'
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        repository: apify/ai-developer
+        ref: ${{ inputs.ai-developer-ref }}
+        token: ${{ inputs.apify-factory-github-token }}
+        path: .ai-developer
+        persist-credentials: false
+
+    # The action checks the repository under review out itself, at its base branch.
+    - name: Review, and approve when nothing needs a human
+      if: steps.decide.outputs.run == 'true'
+      uses: ./.ai-developer/actions/auto-approve
+      with:
+        pr-number: ${{ github.event.pull_request.number }}
+        trigger: ${{ github.event.action }}
+        actor: ${{ github.actor }}
+        github-token: ${{ inputs.github-token }}
+        factory-github-token: ${{ inputs.apify-factory-github-token }}
+        anthropic-api-key: ${{ inputs.anthropic-api-key }}
+        policy: ${{ inputs.policy }}
+        callback-token: ${{ inputs.apify-factory-callback-token }}
+        factory-public-url: ${{ inputs.factory-public-url }}

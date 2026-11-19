@@ -1,0 +1,40 @@
+name: "CloudFormation lint"
+description: "Lint CloudFormation templates with cfn-lint"
+
+inputs:
+  path:
+    description: "Path to lint"
+    required: false
+    default: ./deploy/cloudformation/**/*.yaml
+  ignore-checks:
+    description: "Codes to ignore (equivalent to --ignore-checks option)"
+    required: false
+    # By default ignore warning about package, as it is part of the deploy-cloudformation action anyway
+    default: W3002
+  cfn-lint-version:
+    description: "cfn-lint version"
+    required: false
+    # renovate: datasource=pypi depName=cfn-lint
+    default: 1.51.4
+
+runs:
+  using: "composite"
+  steps:
+    - name: clone repository
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+    - name: install cfn-lint
+      shell: bash
+      env:
+        CFN_LINT_VERSION: ${{ inputs.cfn-lint-version }}
+      run: pip install cfn-lint==${CFN_LINT_VERSION}
+
+    - name: lint
+      shell: bash
+      env:
+        LINT_PATH: ${{ inputs.path }}
+        IGNORE_CHECKS: ${{ inputs.ignore-checks }}
+      # The unquoted path is intentional: cfn-lint expands the glob itself, and bash expands it first when matching.
+      run: |
+        cfn-lint $LINT_PATH \
+          --ignore-checks $IGNORE_CHECKS

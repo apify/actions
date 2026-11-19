@@ -1,0 +1,94 @@
+name: "Python integration tests"
+description: "Run Python integration tests for a single Python version (use a job matrix in the caller to cover several)"
+
+# Matrix, concurrency and conditions belong to the caller job. The original reusable workflow did:
+#
+#   concurrency:
+#     group: integration_tests     # only one run at a time, to avoid exceeding API usage limits of the test user
+#   jobs:
+#     integration_tests:
+#       # Only for PRs from the main repository or for pushes to master.
+#       if: >-
+#         (github.event_name == 'pull_request' && github.event.pull_request.head.repo.owner.login == 'apify') ||
+#         (github.event_name == 'push' && github.ref == 'refs/heads/master')
+#       strategy:
+#         matrix:
+#           os: [ubuntu-latest]
+#           python-version: ["3.10", "3.14"]
+#         max-parallel: 1          # no parallel tests to avoid exceeding API limits
+#       runs-on: ${{ matrix.os }}
+#       steps:
+#         - uses: apify/actions/python-integration-tests@main
+#           with:
+#             python-version: ${{ matrix.python-version }}
+#             upload-coverage: ${{ matrix.os == 'ubuntu-latest' && matrix.python-version == '3.14' }}
+#             ...
+
+inputs:
+  python-version:
+    description: "Python version to be used."
+    required: true
+  upload-coverage:
+    description: "Whether to upload coverage to Codecov (`true` / `false`). Only effective when `codecov-token` is set (e.g. not for fork PRs)."
+    required: false
+    default: "false"
+  install-command:
+    description: "Command to install Python dependencies."
+    required: false
+    default: uv run poe install-dev
+  run-tests-command:
+    description: "Command to run integration tests."
+    required: false
+    default: uv run poe integration-tests-cov
+  tests-concurrency:
+    description: "Number of parallel test processes. Uses pytest-xdist numprocesses value."
+    required: false
+    default: auto
+  apify-test-user-python-sdk-api-token:
+    description: "Apify API token for the primary Python SDK test user."
+    required: true
+  apify-test-user-2-api-token:
+    description: "Apify API token for a secondary test user, used in multi-user scenarios (e.g. sharing restricted storage)."
+    required: false
+    default: ""
+  codecov-token:
+    description: "Token for uploading coverage reports to Codecov."
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout repository
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+    - name: Set up Python ${{ inputs.python-version }}
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Set up uv package manager
+      uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install Python dependencies
+      shell: bash
+      run: ${{ inputs.install-command }}
+
+    - name: Run integration tests
+      shell: bash
+      run: ${{ inputs.run-tests-command }}
+      env:
+        TESTS_CONCURRENCY: ${{ inputs.tests-concurrency }}
+        APIFY_TEST_USER_API_TOKEN: ${{ inputs.apify-test-user-python-sdk-api-token }}
+        APIFY_TEST_USER_2_API_TOKEN: ${{ inputs.apify-test-user-2-api-token }}
+
+    # Upload coverage only when requested, and only when the Codecov token is available (e.g. not for fork PRs).
+    - name: Upload integration test coverage
+      if: inputs.upload-coverage == 'true' && inputs.codecov-token != ''
+      uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+      with:
+        token: ${{ inputs.codecov-token }}
+        files: coverage-integration.xml
+        flags: integration

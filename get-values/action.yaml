@@ -1,0 +1,96 @@
+name: "Get values"
+description: "Get short commit SHA, cleaned branch names and the last commit author from the GitHub context"
+
+inputs:
+  commit-sha:
+    description: "Commit SHA"
+    required: false
+    default: ""
+  use-merged-pull-request-head:
+    description: >-
+      On non pull request events, use the head commit of the pull request whose merge created the current commit,
+      not the commit itself (`true` / `false`). Fails when there is none. Needs the pull-requests read permission.
+    required: false
+    default: "false"
+  github-token:
+    description: "GitHub token used to read the commit and, with `use-merged-pull-request-head`, the pull requests"
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  short-commit-sha:
+    description: "Short commit sha"
+    value: ${{ steps.get-context.outputs.short_commit_sha }}
+  clean-branch-name:
+    description: "Branch name stripped of non-alphanumeric characters, lowercased, and capped at length of 35"
+    value: ${{ steps.get-context.outputs.clean_branch_name }}
+  clean-branch-name-with-suffix:
+    description: "Branch name stripped of non-alphanumeric characters, lowercased, and capped at length of 24 concatenated with the first 6 hex chars of its SHA-1"
+    value: ${{ steps.get-context.outputs.clean_branch_name_with_suffix }}
+  commit-author:
+    description: "Author of last commit"
+    value: ${{ steps.get-commit-author.outputs.result }}
+
+runs:
+  using: "composite"
+  steps:
+    # Cannot use GITHUB_SHA because of https://github.community/t/github-sha-not-the-same-as-the-triggering-commit/18286/2
+    - name: get context
+      id: get-context
+      shell: bash
+      env:
+        INPUT_COMMIT_SHA: ${{ inputs.commit-sha }}
+        EVENT_NAME: ${{ github.event_name }}
+        PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        EVENT_SHA: ${{ github.sha }}
+        USE_MERGED_PULL_REQUEST_HEAD: ${{ inputs.use-merged-pull-request-head }}
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |
+        if [ "${INPUT_COMMIT_SHA}" != "" ]; then
+            COMMIT_SHA=${INPUT_COMMIT_SHA}
+            BRANCH_NAME=${GITHUB_REF_NAME}
+        # pull_request_target exposes the same head ref/sha as pull_request; without this it falls through to the base branch.
+        elif [ "${EVENT_NAME}" = "pull_request" ] || [ "${EVENT_NAME}" = "pull_request_target" ]; then
+            COMMIT_SHA=${PR_HEAD_SHA}
+            BRANCH_NAME=${GITHUB_HEAD_REF}
+        elif [ "${USE_MERGED_PULL_REQUEST_HEAD}" = "true" ]; then
+            COMMIT_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/pulls?state=closed&base=${GITHUB_REF_NAME}&sort=updated&direction=desc&per_page=100" \
+                --jq "map(select(.merge_commit_sha == \"${EVENT_SHA}\"))[0].head.sha // empty")
+            if [ -z "${COMMIT_SHA}" ]; then
+                echo "::error::No merged pull request found for ${EVENT_SHA}"
+                exit 1
+            fi
+            BRANCH_NAME=${GITHUB_REF_NAME}
+        else
+            COMMIT_SHA=${EVENT_SHA}
+            BRANCH_NAME=${GITHUB_REF_NAME}
+        fi
+
+        _BRANCH_NAME=${BRANCH_NAME//[^[:alnum:]]/}
+        _BRANCH_NAME=$(echo "${_BRANCH_NAME}" | tr '[:upper:]' '[:lower:]')
+        CLEAN_BRANCH_NAME=$(echo ${_BRANCH_NAME} | cut -c 1-35)
+        # Used as a name prefix for Helm releases, whose names are capped at 53 chars, so keep it short.
+        CLEAN_BRANCH_NAME_WITH_SUFFIX=$(echo ${_BRANCH_NAME} | cut -c 1-24)-$(echo ${_BRANCH_NAME} | shasum -a 1 | cut -c 1-6)
+
+        echo "SHORT_COMMIT_SHA=${COMMIT_SHA::10}" >> $GITHUB_ENV
+        echo "short_commit_sha=${COMMIT_SHA::10}" >> $GITHUB_OUTPUT
+        echo "clean_branch_name=${CLEAN_BRANCH_NAME}" >> $GITHUB_OUTPUT
+        echo "clean_branch_name_with_suffix=${CLEAN_BRANCH_NAME_WITH_SUFFIX}" >> $GITHUB_OUTPUT
+
+    - name: get last commit author
+      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+      id: get-commit-author
+      with:
+        github-token: ${{ inputs.github-token }}
+        result-encoding: string
+        script: |
+          const commitSha = process.env.SHORT_COMMIT_SHA;
+          if (!commitSha) throw new Error(`Input: "commitSha" has invalid value ${commitSha}`)
+
+          const payload = await github.rest.repos.getCommit({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: commitSha,
+          });
+
+          return payload.data.commit.author.name;

@@ -1,0 +1,100 @@
+name: "Python unit tests"
+description: "Run Python unit tests for a single Python version and OS (use a job matrix in the caller to cover several)"
+
+# Matrix, timeout and fail-fast belong to the caller job, for example:
+#
+#   jobs:
+#     unit_tests:
+#       strategy:
+#         fail-fast: false
+#         matrix:
+#           os: [ubuntu-latest, windows-latest, macos-latest]
+#           python-version: ["3.10", "3.14"]
+#       runs-on: ${{ matrix.os }}
+#       timeout-minutes: 60
+#       steps:
+#         - uses: apify/actions/python-unit-tests@main
+#           with:
+#             python-version: ${{ matrix.python-version }}
+#             upload-coverage: ${{ matrix.os == 'ubuntu-latest' && matrix.python-version == '3.14' }}
+
+inputs:
+  python-version:
+    description: "Python version to be used."
+    required: true
+  upload-coverage:
+    description: "Whether to upload coverage to Codecov (`true` / `false`). Only effective when `codecov-token` is set (e.g. not for fork PRs)."
+    required: false
+    default: "false"
+  install-command:
+    description: "Command to install Python dependencies."
+    required: false
+    default: uv run poe install-dev
+  run-tests-command:
+    description: "Command to run unit tests."
+    required: false
+    default: uv run poe unit-tests-cov
+  tests-concurrency:
+    description: "Number of parallel test processes. Uses pytest-xdist numprocesses value."
+    required: false
+    default: auto
+  apify-httpbin-token:
+    description: "Token for Apify httpbin service. If provided, uses httpbin.apify.actor, otherwise falls back to httpbin.org."
+    required: false
+    default: ""
+  codecov-token:
+    description: "Token for uploading coverage reports to Codecov."
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout repository
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+    - name: macOS cleanup
+      if: runner.os == 'macOS'
+      shell: bash
+      # Disable Spotlight indexing and try to kill all useless processes that could drain CPU during tests
+      run: |
+        sudo mdutil -i off /
+        sudo killall Finder spindump ecosystemanalyticsd SystemUIServer NotificationCenter mds mds_stores mds_worker mdworker mdworker_shared || true
+
+    - name: Set up Python ${{ inputs.python-version }}
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    # The default Windows temp dir is a network disk, ~5x slower at small files than RUNNER_TEMP (apify/actor-templates#907).
+    - name: Use the runner's local disk for temp files
+      if: runner.os == 'Windows'
+      shell: bash
+      run: |
+        echo "TMP=$RUNNER_TEMP" >> "$GITHUB_ENV"
+        echo "TEMP=$RUNNER_TEMP" >> "$GITHUB_ENV"
+
+    - name: Set up uv package manager
+      uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install Python dependencies
+      shell: bash
+      run: ${{ inputs.install-command }}
+
+    - name: Run unit tests
+      shell: bash
+      run: ${{ inputs.run-tests-command }}
+      env:
+        TESTS_CONCURRENCY: ${{ inputs.tests-concurrency }}
+        HTTPBIN_URL: ${{ inputs.apify-httpbin-token && format('https://httpbin.apify.actor?token={0}', inputs.apify-httpbin-token) || 'https://httpbin.org' }}
+
+    # Upload coverage only when requested, and only when the Codecov token is available (e.g. not for fork PRs).
+    - name: Upload unit test coverage
+      if: inputs.upload-coverage == 'true' && inputs.codecov-token != ''
+      uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+      with:
+        token: ${{ inputs.codecov-token }}
+        files: coverage-unit.xml
+        flags: unit

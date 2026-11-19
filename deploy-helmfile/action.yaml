@@ -1,0 +1,308 @@
+name: "Deploy Helmfile"
+description: "Deploy a helmfile to an EKS cluster, optionally over Tailscale VPN and with Slack notifications"
+
+# The caller chooses `runs-on` (the original workflow used ubuntu-22.04-arm64) and `environment`
+# (the environment name becomes part of the OIDC token subject).
+# With OIDC the caller job needs `permissions: id-token: write` and `contents: read`.
+
+inputs:
+  aws-role-arn:
+    description: "AWS IAM role ARN"
+    required: false
+    default: ""
+  use-oidc:
+    description: "Whether to use OIDC for assume role (`true` / `false`)"
+    required: false
+    default: "false"
+  github-oidc-role-arn:
+    description: "Github OIDC role ARN"
+    required: false
+    default: ""
+  aws-region:
+    description: "AWS region"
+    required: false
+    default: us-east-1
+  aws-session-duration:
+    description: "AWS session duration in seconds"
+    required: false
+    default: "3600"
+  revision:
+    description: "Tag given to container image"
+    required: true
+  eks-cluster-name:
+    description: "EKS cluster name"
+    required: true
+  helmfile-path:
+    description: "Path to helmfile.yaml"
+    required: true
+  helmfile-environment:
+    description: "Helmfile environment"
+    required: false
+    default: ""
+  helmfile-other-args:
+    description: "Other helmfile parameters"
+    required: false
+    default: ""
+  env-variables:
+    description: "Space separated list of environment variables to be set during helmfile apply (e.g. `FOO=bar BAR=foo`)"
+    required: false
+    default: ""
+  slack-channel-id:
+    description: "Slack Channel ID"
+    required: false
+    default: ""
+  actor-override:
+    description: "Override the author of event"
+    required: false
+    default: ""
+  helmfile-command:
+    description: "Command run by helmfile"
+    required: false
+    default: apply --suppress-secrets --suppress-diff
+  enable-vpn:
+    description: "Enable VPN connection (`true` / `false`)"
+    required: false
+    default: "true"
+  architecture:
+    description: "CPU architecture of the runner, `amd64` or `arm64`. Auto-detected from the runner when empty."
+    required: false
+    default: ""
+  eksctl-version:
+    description: "eksctl version"
+    required: false
+    # renovate: datasource=github-releases depName=eksctl-io/eksctl
+    default: v0.210.0
+  helmfile-version:
+    description: "Helmfile version"
+    required: false
+    default: v0.171.0
+  helm-diff-version:
+    description: "Helm diff version"
+    required: false
+    default: v3.9.6
+  tailscale-version:
+    description: "Tailscale version"
+    required: false
+    default: 1.104.4
+  tailscale-ping:
+    description: "Tailscale ping target"
+    required: false
+    # Production EKS cluster DNS name to test the VPN connection
+    default: BA6D21AB896DE795C7BF29050D03C3A8.gr7.us-east-1.eks.amazonaws.com
+  aws-access-key-id:
+    description: "AWS access key ID (when not using OIDC)"
+    required: false
+    default: ""
+  aws-secret-access-key:
+    description: "AWS secret access key (when not using OIDC)"
+    required: false
+    default: ""
+  slack-token:
+    description: "Slack API token"
+    required: false
+    default: ""
+  ts-oauth-client-id:
+    description: "Tailscale OAuth Client ID"
+    required: false
+    default: ""
+  ts-oauth-secret:
+    description: "Tailscale OAuth Client Secret"
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    - name: clone repository
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+    - name: Send notification to slack
+      if: inputs.slack-channel-id != ''
+      uses: slackapi/slack-github-action@dcb1066f776dd043e64d0e8ba94ca15cc7e1875d # v4.0.0
+      with:
+        method: chat.postMessage
+        token: ${{ inputs.slack-token }}
+        payload: |
+          {
+              "channel": "${{ inputs.slack-channel-id }}",
+              "text": ":large_blue_circle: *${{ github.repository }} deploy of helmfile started*",
+              "attachments": [
+                {
+                  "color": "#0066ff",
+                  "blocks": [
+                    {
+                      "type": "section",
+                      "fields": [
+                      {"type": "mrkdwn", "text": "*Author:* ${{ inputs.actor-override || github.actor }}"},
+                      {"type": "mrkdwn", "text": "*Revision:* ${{ inputs.revision }}"},
+                      {"type": "mrkdwn", "text": "*Details:* <${{ github.event.pull_request.html_url || github.event.head_commit.url }}|trigger>, <https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}|workflow run>"},
+                      {"type": "mrkdwn", "text": "*Triggered by:* ${{ github.event_name }}"}
+                    ]
+                    }
+                  ]
+                }
+              ]
+            }
+
+    # There is no public action that would give us the abilities we need. Meaning:
+    #   - helmfile
+    #   - eksctl
+    #   - helm secret plugin
+    # NOTE: This will go away with terraform
+    - name: setup dependencies
+      shell: bash
+      env:
+        EKSCTL_VERSION: ${{ inputs.eksctl-version }}
+        HELMFILE_VERSION: ${{ inputs.helmfile-version }}
+        HELM_DIFF_PLUGIN_VERSION: ${{ inputs.helm-diff-version }}
+        INPUT_ARCHITECTURE: ${{ inputs.architecture }}
+        RUNNER_ARCH_NAME: ${{ runner.arch }}
+      run: |
+        HELMFILE_VERSION_WITHOUT_PREFIX=${HELMFILE_VERSION:1}
+
+        # Determine architecture based on the input or the runner
+        ARCH="${INPUT_ARCHITECTURE}"
+        if [ -z "$ARCH" ]; then
+          ARCH="amd64"
+          if [[ "${RUNNER_ARCH_NAME}" == "ARM64" ]]; then
+            ARCH="arm64"
+          fi
+        fi
+
+        curl -fsSL -o helmfile.tar.gz https://github.com/helmfile/helmfile/releases/download/${HELMFILE_VERSION}/helmfile_${HELMFILE_VERSION_WITHOUT_PREFIX}_linux_${ARCH}.tar.gz
+        curl -fsSL -o eksctl.tar.gz https://github.com/eksctl-io/eksctl/releases/download/${EKSCTL_VERSION}/eksctl_Linux_${ARCH}.tar.gz
+
+        helm plugin install https://github.com/databus23/helm-diff --version ${HELM_DIFF_PLUGIN_VERSION}
+
+        mkdir -p $HOME/.local/bin
+
+        tar -C $HOME/.local/bin/ -xf ./eksctl.tar.gz
+        tar -C $HOME/.local/bin/ -xf ./helmfile.tar.gz
+
+        chmod +x $HOME/.local/bin/*
+        echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+    - name: assume IAM role
+      if: inputs.use-oidc != 'true'
+      uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+      with:
+        aws-access-key-id: ${{ inputs.aws-access-key-id }}
+        aws-secret-access-key: ${{ inputs.aws-secret-access-key }}
+        aws-region: ${{ inputs.aws-region }}
+        role-to-assume: ${{ inputs.aws-role-arn }}
+        role-duration-seconds: ${{ inputs.aws-session-duration }}
+
+        # This parameter is needed otherwise this action is trying to tag session
+        # which does not work for cross-account assume
+        role-skip-session-tagging: true
+
+    # First assume GithubOIDCRole role, the trust relationship between GitHub and AWS is defined in IAM GithubOIDCRole in the organization account. This role has permissions to assume Deployer roles only.
+    - name: assume GithubOIDCRole
+      if: inputs.use-oidc == 'true'
+      uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+      with:
+        aws-region: ${{ inputs.aws-region }}
+        role-to-assume: ${{ inputs.github-oidc-role-arn }}
+        role-duration-seconds: ${{ inputs.aws-session-duration }}
+
+        # This parameter is needed otherwise this action is trying to tag session
+        # which does not work for cross-account assume
+        role-skip-session-tagging: true
+
+    # Then assume Deployer role, which can be assumed by GithubOIDCRole and has all the permissions needed to deploy cloudformation stacks.
+    - name: assume Deployer role
+      if: inputs.use-oidc == 'true'
+      uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+      with:
+        aws-region: ${{ inputs.aws-region }}
+        role-to-assume: ${{ inputs.aws-role-arn }}
+        role-duration-seconds: ${{ inputs.aws-session-duration }}
+        role-chaining: true
+        role-skip-session-tagging: true
+
+    - name: setup kubeconfig
+      shell: bash
+      env:
+        EKS_CLUSTER_NAME: ${{ inputs.eks-cluster-name }}
+      run: aws eks update-kubeconfig --name "$EKS_CLUSTER_NAME"
+
+    - name: Tailscale VPN
+      uses: tailscale/github-action@064b10558093f38325e838ddea35486bdc6b1d5c # v4.4.0
+      if: inputs.enable-vpn == 'true'
+      with:
+        oauth-client-id: ${{ inputs.ts-oauth-client-id }}
+        oauth-secret: ${{ inputs.ts-oauth-secret }}
+        tags: tag:ci
+        version: ${{ inputs.tailscale-version }}
+        ping: ${{ inputs.tailscale-ping }}
+
+    - name: helmfile diff
+      if: inputs.helmfile-command != 'destroy'
+      shell: bash
+      env:
+        ENV_VARIABLES: ${{ inputs.env-variables }}
+        HELMFILE_PATH: ${{ inputs.helmfile-path }}
+        HELMFILE_ENVIRONMENT: ${{ inputs.helmfile-environment }}
+      run: |
+        export $(echo $ENV_VARIABLES)
+        HELMFILE_PARAMS="-f $HELMFILE_PATH"
+        [ -n "$HELMFILE_ENVIRONMENT" ] && HELMFILE_PARAMS+=" -e $HELMFILE_ENVIRONMENT"
+        helmfile diff --output dyff $HELMFILE_PARAMS
+
+    - name: helmfile ${{ inputs.helmfile-command }}
+      shell: bash
+      env:
+        ENV_VARIABLES: ${{ inputs.env-variables }}
+        HELMFILE_PATH: ${{ inputs.helmfile-path }}
+        HELMFILE_ENVIRONMENT: ${{ inputs.helmfile-environment }}
+        HELMFILE_OTHER_ARGS: ${{ inputs.helmfile-other-args }}
+        HELMFILE_COMMAND: ${{ inputs.helmfile-command }}
+      run: |
+        export $(echo $ENV_VARIABLES)
+        HELMFILE_PARAMS="-f $HELMFILE_PATH"
+        [ -n "$HELMFILE_ENVIRONMENT" ] && HELMFILE_PARAMS+=" -e $HELMFILE_ENVIRONMENT"
+        [ -n "$HELMFILE_OTHER_ARGS" ] && HELMFILE_PARAMS+=" $HELMFILE_OTHER_ARGS"
+        helmfile $HELMFILE_PARAMS $HELMFILE_COMMAND
+
+    - name: helper - get slack message formatting
+      id: slack-helper
+      if: always() && inputs.slack-channel-id != ''
+      shell: bash
+      env:
+        JOB_STATUS: ${{ job.status }}
+      run: |
+        if [ "$JOB_STATUS" = "success" ]; then
+          echo "color=#00cc00" >> "$GITHUB_OUTPUT"
+          echo "emoji=large_green_circle" >> "$GITHUB_OUTPUT"
+        else
+          echo "color=#ff0000" >> "$GITHUB_OUTPUT"
+          echo "emoji=red_circle" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: send result to slack
+      if: always() && inputs.slack-channel-id != ''
+      uses: slackapi/slack-github-action@dcb1066f776dd043e64d0e8ba94ca15cc7e1875d # v4.0.0
+      with:
+        method: chat.postMessage
+        token: ${{ inputs.slack-token }}
+        payload: |
+          {
+              "channel": "${{ inputs.slack-channel-id }}",
+              "text": ":${{ steps.slack-helper.outputs.emoji }}: *${{ github.repository }} deploy of helmfile result: ${{ job.status }}*",
+              "attachments": [
+                {
+                  "color": "${{ steps.slack-helper.outputs.color }}",
+                  "blocks": [
+                    {
+                      "type": "section",
+                      "fields": [
+                      {"type": "mrkdwn", "text": "*Author:* ${{ inputs.actor-override || github.actor }}"},
+                      {"type": "mrkdwn", "text": "*Revision:* ${{ inputs.revision }}"},
+                      {"type": "mrkdwn", "text": "*Details:* <${{ github.event.pull_request.html_url || github.event.head_commit.url }}|trigger>, <https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}|workflow run>"},
+                      {"type": "mrkdwn", "text": "*Triggered by:* ${{ github.event_name }}"}
+                    ]
+                    }
+                  ]
+                }
+              ]
+            }

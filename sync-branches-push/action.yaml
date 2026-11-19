@@ -1,0 +1,83 @@
+name: "Sync branches (push)"
+description: "Merge the current branch into a base branch (e.g. master into develop) via the GitHub API, with a Slack notification on failure"
+
+inputs:
+  slack-channel-id:
+    description: "Slack Channel ID"
+    required: true
+  revision:
+    description: "Tag given to container image"
+    required: true
+  git-config-username:
+    description: "Git configuration - username (unused, kept for compatibility with the original workflow)"
+    required: false
+    default: ""
+  git-config-email:
+    description: "Git configuration - email (unused, kept for compatibility with the original workflow)"
+    required: false
+    default: ""
+  base-branch:
+    description: "Branch that will be synchronized with current branch"
+    required: false
+    default: develop
+  actor-override:
+    description: "Override the author of event"
+    required: false
+    default: ""
+  slack-token:
+    description: "Slack API token"
+    required: true
+  github-token:
+    description: "Github token used to merge. This cannot be GITHUB_TOKEN if the branch is protected. It must be a real github user (or service account) with an exception from branch protection."
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Merge head branch into base branch via GitHub API
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        BASE_BRANCH: ${{ inputs.base-branch }}
+      run: |
+        if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+          HEAD_BRANCH="${GITHUB_BASE_REF}"
+        elif [ "${GITHUB_EVENT_NAME}" = "push" ] || [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+          HEAD_BRANCH="${GITHUB_REF_NAME}"
+        else
+          echo ">>> Don't know how to handle event name: ${GITHUB_EVENT_NAME}"
+          exit 1
+        fi
+
+        gh api -X POST "repos/${GITHUB_REPOSITORY}/merges" \
+          -f base="${BASE_BRANCH}" \
+          -f head="${HEAD_BRANCH}" \
+          -f commit_message="Merge ${HEAD_BRANCH} into ${BASE_BRANCH}"
+
+    - name: report failure to slack
+      if: failure() && inputs.slack-channel-id != ''
+      uses: slackapi/slack-github-action@dcb1066f776dd043e64d0e8ba94ca15cc7e1875d # v4.0.0
+      with:
+        method: chat.postMessage
+        token: ${{ inputs.slack-token }}
+        payload: |
+          {
+              "channel": "${{ inputs.slack-channel-id }}",
+              "text": ":red_circle: *${{ github.repository }} syncing ${{ github.base_ref }} to ${{ inputs.base-branch }}: failure*",
+              "attachments": [
+                {
+                  "color": "#ff0000",
+                  "blocks": [
+                    {
+                      "type": "section",
+                      "fields": [
+                      {"type": "mrkdwn", "text": "*Author:* ${{ inputs.actor-override || github.actor }}"},
+                      {"type": "mrkdwn", "text": "*Revision:* ${{ inputs.revision }}"},
+                      {"type": "mrkdwn", "text": "*Details:* <${{ github.event.pull_request.html_url || github.event.head_commit.url }}|trigger>, <https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}|workflow run>"},
+                      {"type": "mrkdwn", "text": "*Triggered by:* ${{ github.event_name }}"}
+                    ]
+                    }
+                  ]
+                }
+              ]
+            }
