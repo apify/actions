@@ -1,0 +1,97 @@
+name: "Sync branches"
+description: "Open and merge a pull request from the current branch to a base branch (e.g. master to develop), with a Slack notification on failure"
+
+inputs:
+  slack-channel-id:
+    description: "Slack Channel ID"
+    required: true
+  revision:
+    description: "Tag given to container image"
+    required: true
+  base-branch:
+    description: "Branch that will be synchronized with current branch"
+    required: false
+    default: develop
+  actor-override:
+    description: "Override the author of event"
+    required: false
+    default: ""
+  slack-token:
+    description: "Slack API token"
+    required: true
+  github-token:
+    description: "Github token to open, approve and merge the PR (GITHUB_TOKEN cannot open and approve PR). Typically the Apify Service Account token."
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: open and merge pull request
+      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+      env:
+        BASE_BRANCH: ${{ inputs.base-branch }}
+      with:
+        github-token: ${{ inputs.github-token }}
+        script: |
+          // Use the service account token, passed as `github-token`.
+          // Apify Service Account does not trigger PR toolkit,
+          // does not need approval for PRs and does not need to wait for status checks
+          const serviceAccountOctokit = github;
+
+          let headBranch = '';
+          const eventName = process.env.GITHUB_EVENT_NAME;
+          if (eventName === 'pull_request') {
+              headBranch = process.env.GITHUB_BASE_REF;
+          } else if (eventName === 'push' || eventName === 'workflow_dispatch') {
+              headBranch = process.env.GITHUB_REF_NAME;
+          } else {
+              throw new Error(`Don't know how to handle event name: ${eventName}`);
+          }
+
+          const baseBranch = process.env.BASE_BRANCH;
+
+          // Create pull request from headBranch to baseBranch (typically `master` to `develop`)
+          const createResp = await serviceAccountOctokit.rest.pulls.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              head: headBranch,
+              base: baseBranch,
+              title: `chore: backport changes from ${headBranch} to ${baseBranch} [ignore]`,
+          });
+
+          const pullRequestNumber = createResp.data.number;
+
+          // Merge pull request
+          await serviceAccountOctokit.rest.pulls.merge({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pullRequestNumber,
+          });
+
+    - name: report failure to slack
+      if: failure() && inputs.slack-channel-id != ''
+      uses: slackapi/slack-github-action@dcb1066f776dd043e64d0e8ba94ca15cc7e1875d # v4.0.0
+      with:
+        method: chat.postMessage
+        token: ${{ inputs.slack-token }}
+        payload: |
+          {
+              "channel": "${{ inputs.slack-channel-id }}",
+              "text": ":red_circle: *${{ github.repository }} syncing ${{ github.base_ref }} to ${{ inputs.base-branch }}: failure*",
+              "attachments": [
+                {
+                  "color": "#ff0000",
+                  "blocks": [
+                    {
+                      "type": "section",
+                      "fields": [
+                      {"type": "mrkdwn", "text": "*Author:* ${{ inputs.actor-override || github.actor }}"},
+                      {"type": "mrkdwn", "text": "*Revision:* ${{ inputs.revision }}"},
+                      {"type": "mrkdwn", "text": "*Details:* <${{ github.event.pull_request.html_url || github.event.head_commit.url }}|trigger>, <https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}|workflow run>"},
+                      {"type": "mrkdwn", "text": "*Triggered by:* ${{ github.event_name }}"}
+                    ]
+                    }
+                  ]
+                }
+              ]
+            }

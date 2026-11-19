@@ -1,0 +1,115 @@
+name: "Release marker"
+description: "Mark a release in Grafana and/or Sentry, with a Slack notification on failure"
+
+inputs:
+  revision:
+    description: "Revision that will be marked"
+    required: true
+  sentry-org:
+    description: "Sentry Organization"
+    required: false
+    default: ""
+  sentry-project:
+    description: "Sentry project"
+    required: false
+    default: ""
+  sentry-environment-frontend:
+    description: "Sentry environment (frontend)"
+    required: false
+    default: ""
+  sentry-environment-backend:
+    description: "Sentry environment (backend)"
+    required: false
+    default: ""
+  slack-channel-id:
+    description: "Slack Channel ID (notified on failure)"
+    required: false
+    default: ""
+  actor-override:
+    description: "Override the author of event"
+    required: false
+    default: ""
+  environment:
+    description: "Environment"
+    required: false
+    default: ""
+  grafana-annotation-tag:
+    description: "Custom annotation tag"
+    required: false
+    default: "default"
+  sentry-auth-token:
+    description: "Sentry authentication token"
+    required: false
+    default: ""
+  slack-token:
+    description: "Slack API token"
+    required: false
+    default: ""
+  grafana-api-token:
+    description: "Grafana API token"
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    - name: mark release in grafana
+      if: inputs.revision != ''
+      uses: frankie567/grafana-annotation-action@36ec3b43d55fdebbec9dbff9ce1578f4b2f3ad45 # v1.0.3
+      with:
+        apiHost: https://grafana.apify.dev
+        apiToken: ${{ inputs.grafana-api-token }}
+        text: ${{ inputs.environment }} - Deployment of ${{ inputs.revision }}
+        tags: deployment,github,${{ inputs.environment }},${{ inputs.grafana-annotation-tag }}
+
+    - name: checkout repository
+      if: inputs.sentry-org != ''
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+    - name: mark deploy - frontend
+      if: inputs.sentry-org != '' && inputs.sentry-environment-frontend != ''
+      uses: getsentry/action-release@a1abafc2e9bae87dc3d436b2b8f5e68de73aa52c # v3.9.0
+      env:
+        SENTRY_AUTH_TOKEN: ${{ inputs.sentry-auth-token }}
+        SENTRY_ORG: ${{ inputs.sentry-org }}
+        SENTRY_PROJECT: ${{ inputs.sentry-project }}
+      with:
+        environment: ${{ inputs.sentry-environment-frontend }}
+
+    - name: mark deploy - backend
+      if: inputs.sentry-org != '' && inputs.sentry-environment-backend != ''
+      uses: getsentry/action-release@a1abafc2e9bae87dc3d436b2b8f5e68de73aa52c # v3.9.0
+      env:
+        SENTRY_AUTH_TOKEN: ${{ inputs.sentry-auth-token }}
+        SENTRY_ORG: ${{ inputs.sentry-org }}
+        SENTRY_PROJECT: ${{ inputs.sentry-project }}
+      with:
+        environment: ${{ inputs.sentry-environment-backend }}
+
+    - name: report failure to slack
+      if: failure() && inputs.slack-channel-id != ''
+      uses: slackapi/slack-github-action@dcb1066f776dd043e64d0e8ba94ca15cc7e1875d # v4.0.0
+      with:
+        method: chat.postMessage
+        token: ${{ inputs.slack-token }}
+        payload: |
+          {
+              "channel": "${{ inputs.slack-channel-id }}",
+              "text": ":red_circle: *${{ github.repository }} marking release in new Grafana/sentry failed failure*",
+              "attachments": [
+                {
+                  "color": "#ff0000",
+                  "blocks": [
+                    {
+                      "type": "section",
+                      "fields": [
+                      {"type": "mrkdwn", "text": "*Author:* ${{ inputs.actor-override || github.actor }}"},
+                      {"type": "mrkdwn", "text": "*Revision:* ${{ inputs.revision }}"},
+                      {"type": "mrkdwn", "text": "*Details:* <${{ github.event.pull_request.html_url || github.event.head_commit.url }}|trigger>, <https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}|workflow run>"},
+                      {"type": "mrkdwn", "text": "*Triggered by:* ${{ github.event_name }}"}
+                    ]
+                    }
+                  ]
+                }
+              ]
+            }

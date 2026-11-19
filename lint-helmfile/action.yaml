@@ -1,0 +1,71 @@
+name: "Lint helmfile"
+description: "Lint a helmfile"
+
+inputs:
+  helmfile-path:
+    description: "Path to helmfile.yaml"
+    required: true
+  helmfile-environment:
+    description: "Helmfile environment"
+    required: false
+    default: ""
+  helmfile-other-args:
+    description: "Other helmfile parameters"
+    required: false
+    default: ""
+  env-variables:
+    description: "Space separated list of environment variables to be set during helmfile sync (e.g. `FOO=bar BAR=foo`)"
+    required: false
+    default: ""
+  helmfile-version:
+    description: "Helmfile version"
+    required: false
+    default: v0.171.0
+  architecture:
+    description: "CPU architecture of the runner, `amd64` or `arm64`. Auto-detected from the runner when empty."
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    - name: clone repository
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+    - name: install helmfile
+      shell: bash
+      env:
+        HELMFILE_VERSION: ${{ inputs.helmfile-version }}
+        INPUT_ARCHITECTURE: ${{ inputs.architecture }}
+        RUNNER_ARCH_NAME: ${{ runner.arch }}
+      run: |
+        HELMFILE_VERSION_WITHOUT_PREFIX=${HELMFILE_VERSION:1}
+
+        ARCH="${INPUT_ARCHITECTURE}"
+        if [ -z "$ARCH" ]; then
+          ARCH="amd64"
+          if [[ "${RUNNER_ARCH_NAME}" == "ARM64" ]]; then
+            ARCH="arm64"
+          fi
+        fi
+
+        mkdir -p $HOME/.local/bin
+        curl -fsSL -o helmfile.tar.gz https://github.com/helmfile/helmfile/releases/download/${HELMFILE_VERSION}/helmfile_${HELMFILE_VERSION_WITHOUT_PREFIX}_linux_${ARCH}.tar.gz
+        tar -C $HOME/.local/bin/ -xf ./helmfile.tar.gz
+        chmod +x $HOME/.local/bin/helmfile
+        echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+    - name: lint
+      shell: bash
+      env:
+        HELMFILE_VERSION: ${{ inputs.helmfile-version }}
+        ENV_VARIABLES: ${{ inputs.env-variables }}
+        HELMFILE_PATH: ${{ inputs.helmfile-path }}
+        HELMFILE_ENVIRONMENT: ${{ inputs.helmfile-environment }}
+        HELMFILE_OTHER_ARGS: ${{ inputs.helmfile-other-args }}
+      run: |
+        export $(echo $ENV_VARIABLES)
+        HELMFILE_PARAMS="-f $HELMFILE_PATH"
+        [ -n "$HELMFILE_ENVIRONMENT" ] && HELMFILE_PARAMS+=" -e $HELMFILE_ENVIRONMENT"
+        [ -n "$HELMFILE_OTHER_ARGS" ] && HELMFILE_PARAMS+=" $HELMFILE_OTHER_ARGS"
+        helmfile $HELMFILE_PARAMS lint

@@ -1,0 +1,275 @@
+name: "Deploy CloudFormation"
+description: "Deploy a CloudFormation stack, optionally packaging the template to S3 and notifying Slack"
+
+# The caller chooses `runs-on` and `environment` (the environment name becomes part of the OIDC token subject).
+# With OIDC the caller job needs `permissions: id-token: write` and `contents: read`.
+
+inputs:
+  aws-role-arn:
+    description: "AWS IAM role ARN"
+    required: false
+    default: ""
+  use-oidc:
+    description: "Whether to use OIDC for assume role (`true` / `false`)"
+    required: false
+    default: "false"
+  github-oidc-role-arn:
+    description: "Github OIDC role ARN"
+    required: false
+    default: "arn:aws:iam::031263542130:role/GithubOIDCRole"
+  aws-region:
+    description: "AWS region"
+    required: false
+    default: us-east-1
+  aws-session-duration:
+    description: "AWS session duration in seconds"
+    required: false
+    default: "3600"
+  slack-channel-id:
+    description: "Slack Channel ID"
+    required: false
+    default: ""
+  actor-override:
+    description: "Override the author of event"
+    required: false
+    default: ""
+  stack-name:
+    description: "Cloudformation stack name"
+    required: true
+  template-file:
+    description: "Path to cloudformation template file"
+    required: true
+  revision:
+    description: "Revision of change"
+    required: true
+  s3-bucket:
+    description: "S3 bucket where templates will be stored"
+    required: false
+    default: ""
+  parameters:
+    description: "Parameters (plain text or file) for cloudformation template"
+    required: false
+    default: ""
+  capabilities:
+    description: "Cloudformation stack capabilities"
+    required: false
+    default: ""
+  cloudformation-role-arn:
+    description: "IAM role ARN assumed by Cloudformation service"
+    required: false
+    default: ""
+  additional-parameters:
+    description: "Additional parameters of aws cloudformation deploy"
+    required: false
+    default: ""
+  aws-access-key-id:
+    description: "AWS access key ID (when not using OIDC)"
+    required: false
+    default: ""
+  aws-secret-access-key:
+    description: "AWS secret access key (when not using OIDC)"
+    required: false
+    default: ""
+  slack-token:
+    description: "Slack API token"
+    required: false
+    default: ""
+  secret-parameters:
+    description: "Secret parameters (plain text or file) for cloudformation template. Limited security, scoped per CF stack."
+    required: false
+    default: ""
+
+outputs:
+  stack-outputs:
+    description: "Stringified json containing outputs of cloudformation stack"
+    value: ${{ steps.deploy.outputs.stackOutputs }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Send notification to slack
+      if: inputs.slack-channel-id != ''
+      uses: slackapi/slack-github-action@dcb1066f776dd043e64d0e8ba94ca15cc7e1875d # v4.0.0
+      with:
+        method: chat.postMessage
+        token: ${{ inputs.slack-token }}
+        payload: |
+          {
+              "channel": "${{ inputs.slack-channel-id }}",
+              "text": ":large_blue_circle: *${{ github.repository }} deploy of cloudformation stack ${{ inputs.stack-name }} started*",
+              "attachments": [
+                {
+                  "color": "#0066ff",
+                  "blocks": [
+                    {
+                      "type": "section",
+                      "fields": [
+                      {"type": "mrkdwn", "text": "*Author:* ${{ inputs.actor-override || github.actor }}"},
+                      {"type": "mrkdwn", "text": "*Revision:* ${{ inputs.revision }}"},
+                      {"type": "mrkdwn", "text": "*Details:* <${{ github.event.pull_request.html_url || github.event.head_commit.url }}|trigger>, <https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}|workflow run>"},
+                      {"type": "mrkdwn", "text": "*Triggered by:* ${{ github.event_name }}"}
+                    ]
+                    }
+                  ]
+                }
+              ]
+            }
+
+    - name: clone repository
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+    - name: assume IAM role
+      if: inputs.use-oidc != 'true'
+      uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+      with:
+        aws-access-key-id: ${{ inputs.aws-access-key-id }}
+        aws-secret-access-key: ${{ inputs.aws-secret-access-key }}
+        aws-region: ${{ inputs.aws-region }}
+        role-to-assume: ${{ inputs.aws-role-arn }}
+        role-duration-seconds: ${{ inputs.aws-session-duration }}
+
+        # This parameter is needed otherwise this action is trying to tag session
+        # which does not work for cross-account assume
+        role-skip-session-tagging: true
+
+    # First assume GithubOIDCRole role, the trust relationship between GitHub and AWS is defined in IAM GithubOIDCRole in the organization account. This role has permissions to assume Deployer roles only.
+    - name: assume GithubOIDCRole
+      if: inputs.use-oidc == 'true'
+      uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+      with:
+        aws-region: ${{ inputs.aws-region }}
+        role-to-assume: ${{ inputs.github-oidc-role-arn }}
+        role-duration-seconds: ${{ inputs.aws-session-duration }}
+
+        # This parameter is needed otherwise this action is trying to tag session
+        # which does not work for cross-account assume
+        role-skip-session-tagging: true
+
+    # Then assume Deployer role, which can be assumed by GithubOIDCRole and has all the permissions needed to deploy cloudformation stacks.
+    - name: assume Deployer role
+      if: inputs.use-oidc == 'true'
+      uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+      with:
+        aws-region: ${{ inputs.aws-region }}
+        role-to-assume: ${{ inputs.aws-role-arn }}
+        role-duration-seconds: ${{ inputs.aws-session-duration }}
+        role-chaining: true
+        role-skip-session-tagging: true
+
+    # Since the official cloudformation deploy action is archived for some reason, let's script this!
+    - name: deploy
+      id: deploy
+      shell: bash
+      env:
+        TEMPLATE_FILE: ${{ inputs.template-file }}
+        S3_BUCKET: ${{ inputs.s3-bucket }}
+        PARAMETERS: ${{ inputs.parameters }}
+        SECRET_PARAMETERS: ${{ inputs.secret-parameters }}
+        CAPABILITIES: ${{ inputs.capabilities }}
+        CLOUDFORMATION_ROLE_ARN: ${{ inputs.cloudformation-role-arn }}
+        STACK_NAME: ${{ inputs.stack-name }}
+        REVISION: ${{ inputs.revision }}
+        ADDITIONAL_PARAMETERS: ${{ inputs.additional-parameters }}
+      # Unquoted expansions of PARAMETERS, SECRET_PARAMETERS and ADDITIONAL_PARAMETERS are intentional (word splitting).
+      run: |
+        OUTPUT_TEMPLATE_FILE=$TEMPLATE_FILE
+        if [ "$S3_BUCKET" != "" ]; then
+            echo ">>> Checking of bucket exists. If not, will try to create it"
+            aws s3 ls | grep $S3_BUCKET > /dev/null || aws s3 mb s3://$S3_BUCKET > /dev/null
+            OUTPUT_TEMPLATE_FILE=$(dirname $TEMPLATE_FILE)/pkg_$(basename $TEMPLATE_FILE)
+            aws cloudformation package \
+                --template-file $TEMPLATE_FILE \
+                --s3-bucket $S3_BUCKET \
+                --output-template-file ${OUTPUT_TEMPLATE_FILE}
+        fi
+
+        OPTIONAL_PARAMETERS=""
+        if [ "$PARAMETERS" != "" ] && [ "$SECRET_PARAMETERS" != "" ]; then
+            OPTIONAL_PARAMETERS="${OPTIONAL_PARAMETERS} --parameter-overrides $PARAMETERS $SECRET_PARAMETERS"
+        elif [ "$PARAMETERS" != "" ] && [ "$SECRET_PARAMETERS" == "" ]; then
+            OPTIONAL_PARAMETERS="${OPTIONAL_PARAMETERS} --parameter-overrides $PARAMETERS"
+        fi
+        if [ "$CAPABILITIES" != "" ]; then
+            OPTIONAL_PARAMETERS="${OPTIONAL_PARAMETERS} --capabilities $CAPABILITIES"
+        fi
+        if [ "$CLOUDFORMATION_ROLE_ARN" ]; then
+            OPTIONAL_PARAMETERS="${OPTIONAL_PARAMETERS} --role-arn $CLOUDFORMATION_ROLE_ARN"
+        fi
+        aws cloudformation deploy \
+            --stack-name $STACK_NAME \
+            --template-file ${OUTPUT_TEMPLATE_FILE} \
+            --tags revision=$REVISION \
+            ${OPTIONAL_PARAMETERS} \
+            $ADDITIONAL_PARAMETERS
+
+        # If there are no changes aws cloudformation deploy creates empty changeset, which ends up in FAILED state. Eventually the number of changesets
+        # hits cloudformation maximum number of changesets limit, thus cloudformation stack becomes un-updatable. To counter this situation
+        # let's try to delete this changeset after deploy. It is challenging to delete the exact changeset, so 1 changeset with the relevant
+        # description is selected and deleted. Avoiding to delete all potential changesets as deleting is sequential and could potentially
+        # take a long time (=> waste of GH credits, prolong deploy time,...)
+
+        # Using jq, because "--output text" appends "\nNone" to response and that would need to processed.
+        CHANGE_SET_NAME=$(
+          aws cloudformation list-change-sets \
+            --stack-name $STACK_NAME \
+            --max-items 1 \
+            --output json \
+            --query "Summaries[?StatusReason=='The submitted information didn\'t contain changes. Submit different information to create a change set.'].ChangeSetName" \
+            | jq -r '.[0]')
+
+        if [ "${CHANGE_SET_NAME}" != "null"  ]; then
+            echo ">>> Empty changeset found! Name: ${CHANGE_SET_NAME}. Deleting..."
+            aws cloudformation delete-change-set \
+                --stack-name $STACK_NAME \
+                --change-set-name ${CHANGE_SET_NAME}
+        fi
+
+        STACK_OUTPUTS=$(aws cloudformation describe-stacks \
+            --stack-name $STACK_NAME \
+            --output json \
+            --query 'Stacks[]' | jq -c '.[] | select(.Outputs != null) | .Outputs | map( { (.OutputKey|tostring): . } ) | add')
+
+        echo "stackOutputs=$STACK_OUTPUTS" >> $GITHUB_OUTPUT
+
+    - name: helper - get slack message formatting
+      id: slack-helper
+      if: always() && inputs.slack-channel-id != ''
+      shell: bash
+      env:
+        JOB_STATUS: ${{ job.status }}
+      run: |
+        if [ "$JOB_STATUS" = "success" ]; then
+          echo "color=#00cc00" >> "$GITHUB_OUTPUT"
+          echo "emoji=large_green_circle" >> "$GITHUB_OUTPUT"
+        else
+          echo "color=#ff0000" >> "$GITHUB_OUTPUT"
+          echo "emoji=red_circle" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: send result to slack
+      if: always() && inputs.slack-channel-id != ''
+      uses: slackapi/slack-github-action@dcb1066f776dd043e64d0e8ba94ca15cc7e1875d # v4.0.0
+      with:
+        method: chat.postMessage
+        token: ${{ inputs.slack-token }}
+        payload: |
+          {
+              "channel": "${{ inputs.slack-channel-id }}",
+              "text": ":${{ steps.slack-helper.outputs.emoji }}: *${{ github.repository }} deploy of cloudformation stack ${{ inputs.stack-name }} result: ${{ job.status }}*",
+              "attachments": [
+                {
+                  "color": "${{ steps.slack-helper.outputs.color }}",
+                  "blocks": [
+                    {
+                      "type": "section",
+                      "fields": [
+                      {"type": "mrkdwn", "text": "*Author:* ${{ inputs.actor-override || github.actor }}"},
+                      {"type": "mrkdwn", "text": "*Revision:* ${{ inputs.revision }}"},
+                      {"type": "mrkdwn", "text": "*Details:* <${{ github.event.pull_request.html_url || github.event.head_commit.url }}|trigger>, <https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}|workflow run>"},
+                      {"type": "mrkdwn", "text": "*Triggered by:* ${{ github.event_name }}"}
+                    ]
+                    }
+                  ]
+                }
+              ]
+            }

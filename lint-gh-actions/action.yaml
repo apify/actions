@@ -1,0 +1,33 @@
+name: "Lint GitHub workflows"
+description: "Lint GitHub workflows with actionlint"
+
+inputs:
+  extra-args:
+    description: "Additional extra arguments for actionlint"
+    required: false
+    default: ""
+  actionlint-version:
+    description: "actionlint version"
+    required: false
+    # renovate: datasource=docker depName=rhysd/actionlint
+    default: 1.7.12
+
+runs:
+  using: "composite"
+  steps:
+    - name: clone repository
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+    - name: lint
+      shell: bash
+      env:
+        ACTIONLINT_VERSION: ${{ inputs.actionlint-version }}
+        EXTRA_ARGS: ${{ inputs.extra-args }}
+      run: |
+        # Disabling shellcheck as we are not using it
+        docker run \
+          -v $(pwd):/repo \
+          --workdir /repo \
+          --rm \
+          rhysd/actionlint:${ACTIONLINT_VERSION} \
+          -shellcheck="" $EXTRA_ARGS
