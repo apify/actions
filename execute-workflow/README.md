@@ -4,7 +4,7 @@ A GitHub Action for triggering workflows via `workflow_dispatch`, waiting for th
 
 - Triggers workflows using the `workflow_dispatch` event
 - Waits for the workflow run to start (up to 60 seconds)
-- Polls the workflow run status until completion
+- Polls the workflow run status until completion, tolerating transient API errors
 - Outputs the workflow run ID and conclusion
 - Fails the action if the triggered workflow doesn't succeed
 
