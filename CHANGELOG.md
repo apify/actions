@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.9.1](https://github.com/apify/actions/compare/v1.9.0...v1.9.1) (2026-11-24)
+
+
+### Bug Fixes
+
+* **execute-workflow:** keep polling when fetching the run status fails transiently ([#60](https://github.com/apify/actions/issues/60)) ([940751d](https://github.com/apify/actions/commit/940751d472b96c7321f1d170a2b6bc2f09f7b702))
+
 ## [1.9.0](https://github.com/apify/actions/compare/v1.8.0...v1.9.0) (2026-11-19)
 
 
