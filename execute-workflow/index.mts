@@ -96,16 +96,29 @@ export async function main({ github, context, core, env }: { github: Octokit, co
 
         // Poll until the workflow completes
         core.info('⏳ Waiting for workflow run to complete...');
+        const maxPollFailures = 5;
+        let pollFailures = 0;
+
         while (workflowRun.status !== 'completed') {
             await new Promise((resolve) => setTimeout(resolve, pollInterval));
 
-            const runStatus = await github.rest.actions.getWorkflowRun({
-                owner,
-                repo,
-                run_id: workflowRun.id,
-            });
+            try {
+                const runStatus = await github.rest.actions.getWorkflowRun({
+                    owner,
+                    repo,
+                    run_id: workflowRun.id,
+                });
 
-            workflowRun = runStatus.data as WorkflowRun;
+                workflowRun = runStatus.data as WorkflowRun;
+                pollFailures = 0;
+            } catch (error) {
+                // A freshly created run can briefly return 404, so only give up after several failures in a row
+                if (++pollFailures >= maxPollFailures) throw error;
+
+                core.warning(`Failed to fetch the workflow run status, retrying: ${(error as Error).message}`);
+                continue;
+            }
+
             core.info(`📊 Status: ${workflowRun.status}`);
         }
 
