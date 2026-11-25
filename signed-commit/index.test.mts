@@ -6,7 +6,7 @@ import * as childProcess from 'node:child_process';
 
 import { describe, afterEach, beforeEach, it, expect, vi } from 'vitest';
 
-import { status, FILE_STATUS, checkSupportedFileModes, main } from './index.mts';
+import { status, FILE_STATUS, checkSupportedFileModes, main, MAX_TREE_REQUEST_BYTES } from './index.mts';
 
 const exec = util.promisify(childProcess.exec);
 
@@ -314,6 +314,101 @@ describe('signed commit action', () => {
             }
 
             expect(fakeGithub.graphql).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('git data api', () => {
+        function createFakeGithub({ isVerified }: { isVerified: boolean }) {
+            let treeCount = 0;
+            return {
+                graphql: vi.fn(),
+                rest: {
+                    git: {
+                        getCommit: vi.fn(async () => ({ data: { tree: { sha: 'base-tree' } } })),
+                        createBlob: vi.fn(async () => ({ data: { sha: 'binary-blob' } })),
+                        createTree: vi.fn(async () => ({ data: { sha: `tree-${++treeCount}` } })),
+                        createCommit: vi.fn(async () => ({
+                            data: { sha: 'c'.repeat(40), verification: { verified: isVerified, reason: isVerified ? 'valid' : 'unsigned' } },
+                        })),
+                        updateRef: vi.fn(async () => ({ data: {} })),
+                    },
+                },
+            };
+        }
+
+        async function runMain(fakeGithub: ReturnType<typeof createFakeGithub>, outputs: Record<string, string> = {}) {
+            const fakeCore = {
+                info: () => {}, warning: () => {}, debug: () => {},
+                setOutput: (name: string, value: string) => { outputs[name] = value; },
+            };
+            const originalCwd = process.cwd();
+            try {
+                process.chdir(repoDir);
+                await main({
+                    github: fakeGithub as any,
+                    core: fakeCore as any,
+                    env: {
+                        COMMIT_MESSAGE: 'chore: release\n\nbody line',
+                        REPO: 'apify/actions',
+                        BRANCH: 'main',
+                        USE_GIT_DATA_API: 'true',
+                    },
+                });
+            } finally {
+                process.chdir(originalCwd);
+            }
+        }
+
+        async function stageChanges() {
+            await doExec(`\
+                echo 'to be deleted' > deleted.txt
+                git add .
+                git commit --no-gpg-sign -m "add file to delete"
+            `);
+            const halfLimit = 'a'.repeat(MAX_TREE_REQUEST_BYTES / 2 + 1);
+            await fs.writeFile(path.join(repoDir, 'first.txt'), halfLimit);
+            await fs.writeFile(path.join(repoDir, 'second.txt'), halfLimit);
+            await fs.writeFile(path.join(repoDir, 'binary.bin'), Buffer.from([0xff, 0xfe, 0x00, 0x01]));
+            await doExec('git rm -q deleted.txt && git add .');
+            return (await doExec('git rev-parse HEAD')).stdout.trim();
+        }
+
+        it('creates the commit in chained tree requests and fast-forwards the branch', async () => {
+            const headSha = await stageChanges();
+            const fakeGithub = createFakeGithub({ isVerified: true });
+            const outputs: Record<string, string> = {};
+
+            await runMain(fakeGithub, outputs);
+
+            const { git } = fakeGithub.rest;
+            expect(fakeGithub.graphql).not.toHaveBeenCalled();
+            expect(git.getCommit).toHaveBeenCalledWith({ owner: 'apify', repo: 'actions', commit_sha: headSha });
+            expect(git.createBlob).toHaveBeenCalledOnce();
+
+            // The two text files don't fit into one request, so the second tree builds on the first one.
+            const treeCalls = git.createTree.mock.calls.map(([params]: any) => params);
+            expect(treeCalls).toHaveLength(2);
+            expect(treeCalls[0].base_tree).toEqual('base-tree');
+            expect(treeCalls[1].base_tree).toEqual('tree-1');
+            const entries = treeCalls.flatMap((params: any) => params.tree);
+            expect(entries.find((entry: any) => entry.path === 'binary.bin')).toMatchObject({ sha: 'binary-blob', mode: '100644' });
+            expect(entries.find((entry: any) => entry.path === 'first.txt')).toMatchObject({ mode: '100644', content: expect.any(String) });
+            expect(entries.find((entry: any) => entry.path === 'deleted.txt')).toMatchObject({ sha: null });
+
+            expect(git.createCommit).toHaveBeenCalledWith({
+                owner: 'apify', repo: 'actions', message: 'chore: release\n\nbody line', tree: 'tree-2', parents: [headSha],
+            });
+            expect(git.updateRef).toHaveBeenCalledWith({ owner: 'apify', repo: 'actions', ref: 'heads/main', sha: 'c'.repeat(40), force: false });
+            expect(outputs.committed).toEqual('true');
+            expect(outputs.commit_long_sha).toEqual('c'.repeat(40));
+        });
+
+        it('does not update the branch when the commit is not signed', async () => {
+            await stageChanges();
+            const fakeGithub = createFakeGithub({ isVerified: false });
+
+            await expect(runMain(fakeGithub)).rejects.toThrow(/not signed/);
+            expect(fakeGithub.rest.git.updateRef).not.toHaveBeenCalled();
         });
     });
 

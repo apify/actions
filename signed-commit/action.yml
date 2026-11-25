@@ -35,6 +35,10 @@ inputs:
     description: 'How many times to retry the commit if it fails because the branch was updated by another author in the meantime. Requires `pull` to be non-empty (so the action can fetch the new HEAD between attempts). Defaults to `0` (no retries).'
     default: '0'
     required: false
+  use-git-data-api:
+    description: 'Create the commit through the REST Git Data API in several smaller requests, instead of a single GraphQL request that times out for large commits (tens of MB). GitHub only signs these commits for GitHub App tokens (e.g. `GITHUB_TOKEN` or an app installation token), so the action fails without updating the branch when the token is a personal access token. Defaults to `false`.'
+    default: 'false'
+    required: false
 
 outputs:
   commit_sha:
@@ -97,6 +101,7 @@ runs:
         ADD: ${{ inputs.add }}
         PULL: ${{ inputs.pull }}
         RETRIES: ${{ inputs.retries }}
+        USE_GIT_DATA_API: ${{ inputs.use-git-data-api }}
       with:
         github-token: ${{ inputs.github-token }}
         script: |

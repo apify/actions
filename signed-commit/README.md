@@ -34,6 +34,7 @@ steps:
 - `pull` (optional, default `''`) — When non-empty, run `git pull <pull>` before staging and committing (e.g. `--rebase --autostash`). The special value `true` runs a plain `git pull` with no arguments. Defaults to an empty string (no pull).
 - `pull-after-push` (optional, default `true`) — Whether to pull the committed changes back into the local repo clone after pushing the commit. Defaults to `true`.
 - `retries` (optional, default `0`) — How many times to retry the commit if it fails because the branch was updated by another author in the meantime. Requires `pull` to be non-empty (otherwise the action would just re-attempt against the same stale HEAD).
+- `use-git-data-api` (optional, default `false`) — Create the commit through the REST Git Data API in several smaller requests instead of a single GraphQL request. Use it for large commits (tens of MB), where the GraphQL request times out with HTTP 504. GitHub only signs these commits for GitHub App tokens (`GITHUB_TOKEN` or an app installation token), so with a personal access token the action fails without updating the branch.
 
 ### Outputs
 
@@ -86,3 +87,30 @@ steps:
 ```
 
 This will retry the commit up to 3 times if it fails due to the branch being updated by another author, waiting with exponential backoff between attempts. The `pull` input is required for retries to work, as the action needs to fetch the new HEAD between attempts to avoid retrying against the same stale commit.
+
+### Example: commit a large change
+
+A single GraphQL request with tens of MB of file contents times out. With `use-git-data-api`, text files are sent in tree requests of at most 4 MB each and other files as blobs, and the branch is then fast-forwarded to the new commit. The token must belong to a GitHub App for the commit to be signed.
+
+```yaml
+steps:
+  - name: Checkout
+    uses: actions/checkout@v6
+
+  - name: Make a large change
+    run: ./scripts/regenerate-everything.sh
+
+  - name: Create GitHub App token
+    id: app-token
+    uses: actions/create-github-app-token@v3
+    with:
+      client-id: ${{ vars.APP_CLIENT_ID }}
+      private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+  - name: Commit through API
+    uses: apify/actions/signed-commit@v1.0.0
+    with:
+      message: "chore: regenerate everything"
+      use-git-data-api: 'true'
+      github-token: ${{ steps.app-token.outputs.token }}
+```
